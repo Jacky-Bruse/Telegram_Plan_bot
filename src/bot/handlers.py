@@ -8,7 +8,7 @@ from datetime import datetime, timedelta
 from typing import Optional, List
 import pytz
 
-from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
+from telegram import Update
 from telegram.ext import ContextTypes
 
 from src.db.database import Database
@@ -32,6 +32,7 @@ from src.bot.messages import (
     get_input_truncated_message,
     get_text_truncated_warning,
 )
+from src.bot.task_sender import send_tasks_with_buttons
 from src.constants import (
     STATUS_PENDING, STATUS_MISSED,
     MAX_INPUT_LINES, MAX_CONTENT_LENGTH,
@@ -149,11 +150,8 @@ class BotHandlers:
             return
 
         # 格式化任务列表
-        lines = [get_today_header()]
-        for task in tasks:
-            lines.append(format_task_item(task))
-
-        await update.message.reply_text("\n".join(lines))
+        header = get_today_header()
+        await send_tasks_with_buttons(context.bot, chat_id, tasks, header)
 
     async def cmd_week(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
         """
@@ -423,61 +421,3 @@ class BotHandlers:
             logger.info(f"User {chat_id} created {len(created_tasks)} tasks")
         else:
             await update.message.reply_text("未能创建任何任务，请检查输入格式。")
-
-
-def create_task_buttons(task_id: int) -> InlineKeyboardMarkup:
-    """
-    创建任务按钮（三键）
-    严格按照文档 7 章节的按钮协议
-
-    Args:
-        task_id: 任务 ID
-
-    Returns:
-        按钮键盘
-    """
-    keyboard = [
-        [
-            InlineKeyboardButton("✅ 完成", callback_data=f"t:{task_id}:done"),
-            InlineKeyboardButton("⏳ 未完成", callback_data=f"t:{task_id}:un"),
-            InlineKeyboardButton("🗑 取消", callback_data=f"t:{task_id}:cancel"),
-        ]
-    ]
-    return InlineKeyboardMarkup(keyboard)
-
-
-def create_postpone_buttons(task_id: int) -> InlineKeyboardMarkup:
-    """
-    创建顺延按钮（两键）
-    严格按照文档 7 章节的按钮协议
-
-    Args:
-        task_id: 任务 ID
-
-    Returns:
-        按钮键盘
-    """
-    keyboard = [
-        [
-            InlineKeyboardButton("顺延 +1 天", callback_data=f"t:{task_id}:p:1"),
-            InlineKeyboardButton("顺延 +2 天", callback_data=f"t:{task_id}:p:2"),
-        ]
-    ]
-    return InlineKeyboardMarkup(keyboard)
-
-
-def create_new_plan_buttons() -> InlineKeyboardMarkup:
-    """
-    创建新计划征集按钮
-    严格按照文档 7 章节的按钮协议
-
-    Returns:
-        按钮键盘
-    """
-    keyboard = [
-        [
-            InlineKeyboardButton("现在录入", callback_data="new:add"),
-            InlineKeyboardButton("稍后再说", callback_data="new:skip"),
-        ]
-    ]
-    return InlineKeyboardMarkup(keyboard)

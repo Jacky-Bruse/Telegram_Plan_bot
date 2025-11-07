@@ -4,7 +4,6 @@
 严格按照文档第 6 章的 Job 规则
 """
 
-import asyncio
 from datetime import datetime, timedelta
 from typing import Optional
 import pytz
@@ -21,11 +20,9 @@ from src.bot.messages import (
     get_new_plan_prompt,
     get_morning_checklist_header,
 )
-from src.bot.handlers import create_task_buttons, create_new_plan_buttons
-from src.constants import (
-    STATUS_PENDING, STATUS_MISSED,
-    MAX_TASKS_PER_MESSAGE, BATCH_SEND_DELAY,
-)
+from src.bot.keyboards import create_new_plan_buttons
+from src.bot.task_sender import send_tasks_with_buttons
+from src.constants import STATUS_PENDING, STATUS_MISSED
 from src.utils.logger import get_logger
 
 logger = get_logger(__name__)
@@ -251,28 +248,8 @@ class TaskScheduler:
             tasks: 任务列表
             is_makeup: 是否是补发
         """
-        # 先发送标题
         header = get_daily_review_header(is_makeup)
-        await self.bot.send_message(chat_id=chat_id, text=header)
-
-        # 分批发送任务
-        for i in range(0, len(tasks), MAX_TASKS_PER_MESSAGE):
-            batch = tasks[i:i + MAX_TASKS_PER_MESSAGE]
-
-            for task in batch:
-                # 每条任务单独发送，附带三键按钮
-                message = f"{format_task_item(task)}"
-                buttons = create_task_buttons(task.id)
-
-                await self.bot.send_message(
-                    chat_id=chat_id,
-                    text=message,
-                    reply_markup=buttons
-                )
-
-            # 批间延迟（避免429限流）
-            if i + MAX_TASKS_PER_MESSAGE < len(tasks):
-                await asyncio.sleep(BATCH_SEND_DELAY)
+        await send_tasks_with_buttons(self.bot, chat_id, tasks, header)
 
         logger.info(f"Daily review sent to chat_id={chat_id}, tasks_count={len(tasks)}")
 
