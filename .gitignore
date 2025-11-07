@@ -1,6 +1,9 @@
 # 配置文件（包含敏感信息）
 config.json
 
+# Claude Code 配置（本地IDE配置）
+.claude/
+
 # 数据目录
 data/
 *.db
