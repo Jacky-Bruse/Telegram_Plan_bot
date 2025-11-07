@@ -22,7 +22,6 @@ from src.bot.messages import (
     get_today_header,
     format_task_item,
     get_no_tasks_message,
-    format_week_tasks,
     get_timezone_updated_message,
     get_evening_time_updated_message,
     get_morning_time_updated_message,
@@ -32,7 +31,7 @@ from src.bot.messages import (
     get_input_truncated_message,
     get_text_truncated_warning,
 )
-from src.bot.task_sender import send_tasks_with_buttons
+from src.bot.task_sender import send_tasks_with_buttons, send_week_tasks_with_buttons
 from src.constants import (
     STATUS_PENDING, STATUS_MISSED,
     MAX_INPUT_LINES, MAX_CONTENT_LENGTH,
@@ -191,9 +190,13 @@ class BotHandlers:
                 tasks_by_date[task.due_date] = []
             tasks_by_date[task.due_date].append(task)
 
-        # 格式化输出（传递用户时区以显示相对时间标签）
-        message = format_week_tasks(tasks_by_date, timezone=user.tz)
-        await update.message.reply_text(message)
+        # 发送任务列表（带按钮，按日期分组）
+        await send_week_tasks_with_buttons(
+            context.bot,
+            chat_id,
+            tasks_by_date,
+            timezone=user.tz
+        )
 
     async def cmd_setevening(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
         """
