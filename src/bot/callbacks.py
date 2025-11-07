@@ -17,7 +17,7 @@ from src.bot.messages import (
     get_postpone_confirmation_days,
     get_input_mode_instructions,
 )
-from src.bot.handlers import create_postpone_buttons
+from src.bot.keyboards import create_postpone_buttons
 from src.constants import ACTION_DONE, ACTION_UNDONE, ACTION_CANCEL, ACTION_POSTPONE
 from src.utils.logger import get_logger
 
