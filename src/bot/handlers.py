@@ -254,11 +254,11 @@ class BotHandlers:
         date_header = f"\n【{date_str}{relative_label}】"
         await bot.send_message(chat_id=chat_id, text=date_header)
 
-        # 发送该日期的所有任务（每个任务带按钮）
-        for task in tasks:
+        # 发送该日期的所有任务（每个任务带按钮和序号）
+        for index, task in enumerate(tasks, start=1):
             await bot.send_message(
                 chat_id=chat_id,
-                text=format_task_item(task),
+                text=format_task_item(task, index),
                 reply_markup=create_task_buttons(task.id),
             )
 

@@ -141,19 +141,21 @@ def get_daily_review_header(is_makeup: bool = False) -> str:
     return "🧾 日终核对（今天应完成）："
 
 
-def format_task_item(task: Task) -> str:
+def format_task_item(task: Task, index: int = None) -> str:
     """
     格式化单个任务条目
 
     Args:
         task: 任务对象
+        index: 显示序号（如果为None则使用task.id，用于向后兼容）
 
     Returns:
-        格式化后的文本，如 "• #12 备份 NAS 配置"
+        格式化后的文本，如 "• #1 备份 NAS 配置"
     """
     # 去掉任务内容开头的日期关键词
     clean_content = _strip_date_keywords(task.content)
-    return f"• #{task.id} {clean_content}"
+    display_id = index if index is not None else task.id
+    return f"• #{display_id} {clean_content}"
 
 
 def get_new_plan_prompt() -> str:
