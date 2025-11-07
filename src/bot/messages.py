@@ -43,7 +43,7 @@ def get_start_message(tz: str, evening_time: str, morning_time: str) -> str:
 /timezone <IANA 名称> 设置时区（如 Asia/Shanghai）"""
 
 
-def _get_relative_date_label(date_str: str, timezone: str = "Asia/Shanghai") -> str:
+def get_relative_date_label(date_str: str, timezone: str = "Asia/Shanghai") -> str:
     """
     获取日期的相对时间标签
 
@@ -194,7 +194,7 @@ def format_task_creation_receipt(tasks: List[tuple], timezone: str = "Asia/Shang
         # 去掉任务内容中的日期关键词
         clean_content = _strip_date_keywords(content)
         # 获取相对时间标签
-        relative_label = _get_relative_date_label(due_date, timezone)
+        relative_label = get_relative_date_label(due_date, timezone)
         # 格式：• 任务内容 → 日期 (相对时间)
         lines.append(f"• {clean_content} → {due_date}{relative_label}")
 
@@ -219,32 +219,6 @@ def get_today_header() -> str:
 def get_week_header() -> str:
     """获取 /week 命令的标题"""
     return "📅 未来 7 天："
-
-
-def format_week_tasks(tasks_by_date: dict, timezone: str = "Asia/Shanghai") -> str:
-    """
-    格式化一周任务
-
-    Args:
-        tasks_by_date: {日期: [任务列表], ...}
-        timezone: 时区名称，用于计算相对时间标签
-
-    Returns:
-        格式化后的文本
-    """
-    if not tasks_by_date:
-        return "未来 7 天没有待办事项 ✅"
-
-    lines = [get_week_header()]
-
-    for date_str, tasks in sorted(tasks_by_date.items()):
-        # 获取相对时间标签（今天、明天、后天）
-        relative_label = _get_relative_date_label(date_str, timezone)
-        lines.append(f"\n【{date_str}{relative_label}】")
-        for task in tasks:
-            lines.append(format_task_item(task))
-
-    return "\n".join(lines)
 
 
 def get_task_done_message() -> str:

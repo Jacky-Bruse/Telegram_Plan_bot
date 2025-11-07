@@ -3,6 +3,7 @@ Bot 命令处理器
 严格按照开发清单第二章的交互稿实现
 """
 
+import asyncio
 import re
 from datetime import datetime, timedelta
 from typing import Optional, List
@@ -20,8 +21,10 @@ from src.bot.messages import (
     get_input_mode_instructions,
     format_task_creation_receipt,
     get_today_header,
+    get_week_header,
     format_task_item,
     get_no_tasks_message,
+    get_relative_date_label,
     get_timezone_updated_message,
     get_evening_time_updated_message,
     get_morning_time_updated_message,
@@ -31,7 +34,8 @@ from src.bot.messages import (
     get_input_truncated_message,
     get_text_truncated_warning,
 )
-from src.bot.task_sender import send_tasks_with_buttons, send_week_tasks_with_buttons
+from src.bot.task_sender import send_tasks_with_buttons
+from src.bot.keyboards import create_task_buttons
 from src.constants import (
     STATUS_PENDING, STATUS_MISSED,
     MAX_INPUT_LINES, MAX_CONTENT_LENGTH,
@@ -171,7 +175,7 @@ class BotHandlers:
         start_date = today.strftime('%Y-%m-%d')
         end_date = (today + timedelta(days=6)).strftime('%Y-%m-%d')
 
-        # 查询7天内的任务（默认隐藏 done/canceled）
+        # 查询7天内的任务（数据库已按 due_date, id 排序）
         tasks = self.db.get_tasks_by_user_and_date_range(
             user.id,
             start_date,
@@ -183,20 +187,83 @@ class BotHandlers:
             await update.message.reply_text("未来 7 天没有待办事项 ✅")
             return
 
-        # 按日期分组
-        tasks_by_date = {}
-        for task in tasks:
-            if task.due_date not in tasks_by_date:
-                tasks_by_date[task.due_date] = []
-            tasks_by_date[task.due_date].append(task)
-
-        # 发送任务列表（带按钮，按日期分组）
-        await send_week_tasks_with_buttons(
+        # 流式处理：直接按日期分组发送，无需构建 dict
+        await self._send_tasks_by_date_stream(
             context.bot,
             chat_id,
-            tasks_by_date,
+            tasks,
             timezone=user.tz
         )
+
+    async def _send_tasks_by_date_stream(
+        self,
+        bot,
+        chat_id: int,
+        tasks: List[Task],
+        timezone: str
+    ):
+        """
+        流式发送按日期分组的任务
+
+        Args:
+            bot: Telegram Bot 实例
+            chat_id: 用户 chat_id
+            tasks: 已按 due_date 排序的任务列表
+            timezone: 时区名称
+        """
+        # 发送标题
+        await bot.send_message(chat_id=chat_id, text=get_week_header())
+
+        current_date = None
+        current_tasks = []
+
+        for task in tasks:
+            if task.due_date != current_date:
+                # 日期变化，发送之前的任务组
+                if current_tasks:
+                    await self._send_date_group(bot, chat_id, current_date, current_tasks, timezone)
+                current_date = task.due_date
+                current_tasks = [task]
+            else:
+                current_tasks.append(task)
+
+        # 发送最后一组
+        if current_tasks:
+            await self._send_date_group(bot, chat_id, current_date, current_tasks, timezone)
+
+    async def _send_date_group(
+        self,
+        bot,
+        chat_id: int,
+        date_str: str,
+        tasks: List[Task],
+        timezone: str
+    ):
+        """
+        发送单个日期的任务组
+
+        Args:
+            bot: Telegram Bot 实例
+            chat_id: 用户 chat_id
+            date_str: 日期字符串 YYYY-MM-DD
+            tasks: 该日期的任务列表
+            timezone: 时区名称
+        """
+        # 发送日期标题
+        relative_label = get_relative_date_label(date_str, timezone)
+        date_header = f"\n【{date_str}{relative_label}】"
+        await bot.send_message(chat_id=chat_id, text=date_header)
+
+        # 发送该日期的所有任务（每个任务带按钮）
+        for task in tasks:
+            await bot.send_message(
+                chat_id=chat_id,
+                text=format_task_item(task),
+                reply_markup=create_task_buttons(task.id),
+            )
+
+        # 添加小延迟避免发送过快
+        await asyncio.sleep(0.1)
 
     async def cmd_setevening(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
         """
