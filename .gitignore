@@ -3,6 +3,7 @@ config.json
 
 # Claude Code 配置（本地IDE配置）
 .claude/
+CLAUDE.md
 
 # 数据目录
 data/
