@@ -1,0 +1,15 @@
+# Telegram Bot
+python-telegram-bot==20.7
+
+# 数据库
+sqlalchemy==2.0.23
+
+# 时区与日期处理
+pytz==2023.3
+python-dateutil==2.8.2
+
+# 调度器
+APScheduler==3.10.4
+
+# 工具库
+typing-extensions==4.8.0

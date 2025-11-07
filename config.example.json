@@ -1,0 +1,19 @@
+{
+  "bot": {
+    "token": "YOUR_BOT_TOKEN_HERE"
+  },
+  "database": {
+    "path": "data/bot.db"
+  },
+  "defaults": {
+    "timezone": "Asia/Shanghai",
+    "evening_hour": 22,
+    "evening_minute": 0,
+    "morning_hour": 8,
+    "morning_minute": 30
+  },
+  "logging": {
+    "level": "INFO",
+    "file": "data/bot.log"
+  }
+}

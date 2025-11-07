@@ -1,0 +1,44 @@
+# Git
+.git
+.gitignore
+
+# Python
+__pycache__
+*.py[cod]
+*$py.class
+*.so
+.Python
+build/
+dist/
+*.egg-info/
+venv/
+env/
+ENV/
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# 数据和配置（这些应该通过卷挂载）
+data/
+*.db
+*.db-journal
+*.log
+config.json
+
+# 文档
+docs/
+*.md
+!README.md
+
+# 测试
+tests/
+.pytest_cache/
+
+# 其他
+.DS_Store
+Thumbs.db
+*.bak
+*.tmp
