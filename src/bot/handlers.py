@@ -412,7 +412,7 @@ class BotHandlers:
 
         # 发送回执
         if created_tasks:
-            receipt = format_task_creation_receipt(created_tasks)
+            receipt = format_task_creation_receipt(created_tasks, timezone=user.tz)
 
             if truncated:
                 receipt += f"\n{get_input_truncated_message(MAX_INPUT_LINES)}"

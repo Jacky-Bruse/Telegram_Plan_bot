@@ -162,27 +162,41 @@ def get_new_plan_prompt() -> str:
 
 def get_input_mode_instructions() -> str:
     """获取一次性输入模式的说明"""
-    return """请发送多行文本，每行=1 个任务。
-行内可写日期：今天/明天/后天/周三/下周一/11-15/2025-11-15/+2d/+1w。
-未写日期默认归档到「明天」。"""
+    return """请发送多行文本，每行 = 1 个任务
+
+📝 示例：
+今天 买菜
+明天 去银行
+周五 下午开会
+11-15 还信用卡
++3d 检查服务器
+
+💡 提示：
+• 行首写日期，后面跟任务内容
+• 不写日期默认为「明天」
+• 支持：今天/明天/后天/周X/下周X/日期/+Nd"""
 
 
-def format_task_creation_receipt(tasks: List[tuple]) -> str:
+def format_task_creation_receipt(tasks: List[tuple], timezone: str = "Asia/Shanghai") -> str:
     """
     格式化任务创建回执
 
     Args:
         tasks: [(任务内容, 到期日期), ...]
+        timezone: 时区名称，用于计算相对时间标签
 
     Returns:
         回执文本
     """
-    lines = [f"已创建 {len(tasks)} 项："]
+    lines = [f"✅ 已创建 {len(tasks)} 项："]
 
     for content, due_date in tasks:
-        # 提取任务描述（不含日期标记）
-        display_content = content
-        lines.append(f"• {display_content}  →  {due_date}")
+        # 去掉任务内容中的日期关键词
+        clean_content = _strip_date_keywords(content)
+        # 获取相对时间标签
+        relative_label = _get_relative_date_label(due_date, timezone)
+        # 格式：• 任务内容 → 日期 (相对时间)
+        lines.append(f"• {clean_content} → {due_date}{relative_label}")
 
     return "\n".join(lines)
 
