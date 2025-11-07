@@ -110,7 +110,7 @@ class CallbackHandlers:
                     if success:
                         # 记录回调
                         self.db.mark_callback_processed(callback_id, task_id, ACTION_DONE)
-                        await query.edit_message_text(get_task_done_message())
+                        await query.edit_message_text(get_task_done_message(task.content))
                     else:
                         await query.edit_message_text(get_task_already_processed_message())
                 else:
@@ -140,7 +140,7 @@ class CallbackHandlers:
 
                     if success:
                         self.db.mark_callback_processed(callback_id, task_id, ACTION_CANCEL)
-                        await query.edit_message_text(get_task_canceled_message())
+                        await query.edit_message_text(get_task_canceled_message(task.content))
                     else:
                         await query.edit_message_text(get_task_already_processed_message())
                 else:

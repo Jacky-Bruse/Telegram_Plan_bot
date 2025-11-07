@@ -250,14 +250,32 @@ def get_confirm_cancel_prompt(task_content: str) -> str:
     return f"确认要取消这个计划吗？\n📝 {clean_content}"
 
 
-def get_task_done_message() -> str:
-    """任务完成的确认消息"""
-    return "已标记完成。"
+def get_task_done_message(task_content: str) -> str:
+    """
+    任务完成的确认消息
+
+    Args:
+        task_content: 任务内容
+
+    Returns:
+        确认消息
+    """
+    clean_content = _strip_date_keywords(task_content)
+    return f"✅ 已完成：{clean_content}"
 
 
-def get_task_canceled_message() -> str:
-    """任务取消的确认消息"""
-    return "已取消任务。"
+def get_task_canceled_message(task_content: str) -> str:
+    """
+    任务取消的确认消息
+
+    Args:
+        task_content: 任务内容
+
+    Returns:
+        确认消息
+    """
+    clean_content = _strip_date_keywords(task_content)
+    return f"🗑 已取消：{clean_content}"
 
 
 def get_task_already_processed_message() -> str:
