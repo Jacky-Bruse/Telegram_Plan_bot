@@ -114,12 +114,13 @@ def _strip_date_keywords(content: str) -> str:
             content = content[len(keyword):].strip()
             break
 
-    # 去掉常见的日期格式（YYYY-MM-DD, MM-DD, MM/DD, MM.DD, +Nd, +Nw）
+    # 去掉常见的日期格式（YYYY-MM-DD, MM-DD, MM/DD, MM.DD, X月X日/号, +Nd, +Nw）
     # 这些通常在开头
     content = re.sub(r'^\d{4}-\d{1,2}-\d{1,2}\s*', '', content)
     content = re.sub(r'^\d{1,2}-\d{1,2}\s*', '', content)
     content = re.sub(r'^\d{1,2}/\d{1,2}\s*', '', content)
     content = re.sub(r'^\d{1,2}\.\d{1,2}\s*', '', content)
+    content = re.sub(r'^\d{1,2}月\d{1,2}(日|号)\s*', '', content)
     content = re.sub(r'^\+\d+[dDwW]\s*', '', content)
 
     return content.strip()
@@ -168,7 +169,7 @@ def get_input_mode_instructions() -> str:
 今天 买菜
 明天 去银行
 周五 下午开会
-11-15 还信用卡
+11月15日 还信用卡
 +3d 检查服务器
 
 💡 提示：

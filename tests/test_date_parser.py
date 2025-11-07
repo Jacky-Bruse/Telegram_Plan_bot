@@ -174,6 +174,23 @@ class TestDateParser(unittest.TestCase):
         tasks = self.parser.parse_tasks("   \n  ")
         self.assertEqual(len(tasks), 0)
 
+    @patch.object(DateParser, 'get_today')
+    def test_chinese_month_day_format(self, mock_get_today):
+        """测试中文月日格式"""
+        mock_get_today.return_value = datetime(2025, 11, 8, 0, 0, 0, tzinfo=pytz.timezone("Asia/Shanghai"))
+
+        test_cases = [
+            ("11月5日 写日记", "2025-11-05"),
+            ("1月1日 新年", "2025-01-01"),
+            ("12月31号 跨年", "2025-12-31"),
+            ("11月5日 周一", "2025-11-05"),  # 优先级测试：显式日期优先于"周一"
+        ]
+
+        for text, expected_date in test_cases:
+            with self.subTest(text=text):
+                date_str, _ = self.parser.parse_date(text)
+                self.assertEqual(date_str, expected_date, f"解析'{text}'失败")
+
 
 if __name__ == '__main__':
     unittest.main()

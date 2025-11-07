@@ -81,6 +81,13 @@ class DateParser:
             year = today.year
             return f"{year}-{int(month):02d}-{int(day):02d}", text
 
+        # X月X日/号 格式（中文月日）
+        match = re.search(r'(?<!\d)(\d{1,2})月(\d{1,2})(日|号)(?!\d)', text)
+        if match:
+            month, day = match.groups()[0], match.groups()[1]
+            year = today.year
+            return f"{year}-{int(month):02d}-{int(day):02d}", text
+
         # 优先级 2: 偏移
         # +Nd 格式（N 天后）
         match = re.search(r'\+(\d+)d', text, re.IGNORECASE)
