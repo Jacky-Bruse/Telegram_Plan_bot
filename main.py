@@ -193,7 +193,7 @@ def main():
         sys.exit(1)
 
     # 12. 检查并发送补发的日终核对（停机恢复逻辑）
-    async def startup_tasks():
+    async def startup_tasks(application):
         """启动时执行的任务"""
         await check_and_send_makeup_reviews(scheduler, db)
 
