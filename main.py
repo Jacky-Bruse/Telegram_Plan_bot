@@ -31,6 +31,7 @@ from src.db.database import get_database
 from src.core.scheduler import TaskScheduler
 from src.bot.handlers import BotHandlers
 from src.bot.callbacks import CallbackHandlers
+from src.bot.messages import get_startup_notification
 from src.utils.config import get_config
 from src.utils.logger import setup_logger, get_logger
 from src.constants import STATUS_PENDING, STATUS_MISSED
@@ -195,7 +196,42 @@ def main():
     # 12. 检查并发送补发的日终核对（停机恢复逻辑）
     async def startup_tasks(application):
         """启动时执行的任务"""
+        # 1. 检查并发送补发的日终核对
         await check_and_send_makeup_reviews(scheduler, db)
+
+        # 2. 发送启动通知（如果已配置）
+        try:
+            # 检查是否启用启动通知
+            enabled = config.get('notifications.startup_alert.enabled', False)
+            admin_chat_id = config.get('notifications.startup_alert.admin_chat_id')
+
+            if enabled and admin_chat_id:
+                # 获取当前时间（使用默认时区）
+                tz = pytz.timezone(config.default_timezone)
+                now = datetime.now(tz)
+                startup_time = now.strftime('%Y-%m-%d %H:%M:%S')
+
+                # 获取用户数量
+                users = db.get_all_users()
+                user_count = len(users)
+
+                # 生成启动通知消息
+                message = get_startup_notification(
+                    startup_time=startup_time,
+                    timezone=config.default_timezone,
+                    user_count=user_count
+                )
+
+                # 发送通知
+                await application.bot.send_message(
+                    chat_id=admin_chat_id,
+                    text=message
+                )
+
+                logger.info(f"Startup notification sent to admin: {admin_chat_id}")
+
+        except Exception as e:
+            logger.error(f"Failed to send startup notification: {e}")
 
     # 将启动任务添加到事件循环
     application.post_init = startup_tasks

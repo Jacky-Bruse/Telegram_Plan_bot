@@ -15,5 +15,11 @@
   "logging": {
     "level": "INFO",
     "file": "data/bot.log"
+  },
+  "notifications": {
+    "startup_alert": {
+      "enabled": false,
+      "admin_chat_id": null
+    }
   }
 }

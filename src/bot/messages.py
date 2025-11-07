@@ -221,3 +221,22 @@ def get_input_truncated_message(limit: int) -> str:
 def get_text_truncated_warning(line_num: int) -> str:
     """文本截断警告"""
     return f"第 {line_num} 行内容过长，已截断到 512 字符。"
+
+
+def get_startup_notification(startup_time: str, timezone: str, user_count: int) -> str:
+    """
+    获取启动通知消息
+
+    Args:
+        startup_time: 启动时间字符串 (YYYY-MM-DD HH:MM:SS)
+        timezone: 时区名称
+        user_count: 注册用户数量
+
+    Returns:
+        启动通知消息文本
+    """
+    return f"""🤖 Telegram Plan Bot 已启动
+
+📅 时间：{startup_time} ({timezone})
+👥 用户数：{user_count}"""
+
