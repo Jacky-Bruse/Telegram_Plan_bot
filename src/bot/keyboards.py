@@ -16,11 +16,12 @@ def create_task_buttons(task_id: int) -> InlineKeyboardMarkup:
 
 
 def create_postpone_buttons(task_id: int) -> InlineKeyboardMarkup:
-    """创建顺延按钮（两键）"""
+    """创建顺延按钮（三键：+1天、+2天、返回）"""
     keyboard = [
         [
             InlineKeyboardButton("顺延 +1 天", callback_data=f"t:{task_id}:p:1"),
             InlineKeyboardButton("顺延 +2 天", callback_data=f"t:{task_id}:p:2"),
+            InlineKeyboardButton("↩️ 返回", callback_data=f"t:{task_id}:back"),
         ]
     ]
     return InlineKeyboardMarkup(keyboard)
