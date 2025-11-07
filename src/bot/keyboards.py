@@ -26,6 +26,28 @@ def create_postpone_buttons(task_id: int) -> InlineKeyboardMarkup:
     return InlineKeyboardMarkup(keyboard)
 
 
+def create_confirm_complete_buttons(task_id: int) -> InlineKeyboardMarkup:
+    """创建完成确认按钮"""
+    keyboard = [
+        [
+            InlineKeyboardButton("✔️ 确认完成", callback_data=f"t:{task_id}:done:cf"),
+            InlineKeyboardButton("↩️ 返回", callback_data=f"t:{task_id}:back"),
+        ]
+    ]
+    return InlineKeyboardMarkup(keyboard)
+
+
+def create_confirm_cancel_buttons(task_id: int) -> InlineKeyboardMarkup:
+    """创建取消确认按钮"""
+    keyboard = [
+        [
+            InlineKeyboardButton("✔️ 确认取消", callback_data=f"t:{task_id}:cancel:cf"),
+            InlineKeyboardButton("↩️ 返回", callback_data=f"t:{task_id}:back"),
+        ]
+    ]
+    return InlineKeyboardMarkup(keyboard)
+
+
 def create_new_plan_buttons() -> InlineKeyboardMarkup:
     """创建新计划征集按钮"""
     keyboard = [

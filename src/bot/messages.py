@@ -222,6 +222,34 @@ def get_week_header() -> str:
     return "📅 未来 7 天："
 
 
+def get_confirm_complete_prompt(task_content: str) -> str:
+    """
+    获取完成确认提示
+
+    Args:
+        task_content: 任务内容
+
+    Returns:
+        确认提示消息
+    """
+    clean_content = _strip_date_keywords(task_content)
+    return f"确认要完成这个计划吗？\n📝 {clean_content}"
+
+
+def get_confirm_cancel_prompt(task_content: str) -> str:
+    """
+    获取取消确认提示
+
+    Args:
+        task_content: 任务内容
+
+    Returns:
+        确认提示消息
+    """
+    clean_content = _strip_date_keywords(task_content)
+    return f"确认要取消这个计划吗？\n📝 {clean_content}"
+
+
 def get_task_done_message() -> str:
     """任务完成的确认消息"""
     return "已标记完成。"

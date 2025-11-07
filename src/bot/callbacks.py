@@ -16,8 +16,15 @@ from src.bot.messages import (
     get_postpone_prompt,
     get_postpone_confirmation_days,
     get_input_mode_instructions,
+    get_confirm_complete_prompt,
+    get_confirm_cancel_prompt,
 )
-from src.bot.keyboards import create_postpone_buttons
+from src.bot.keyboards import (
+    create_postpone_buttons,
+    create_task_buttons,
+    create_confirm_complete_buttons,
+    create_confirm_cancel_buttons,
+)
 from src.constants import ACTION_DONE, ACTION_UNDONE, ACTION_CANCEL, ACTION_POSTPONE
 from src.utils.logger import get_logger
 
@@ -95,15 +102,24 @@ class CallbackHandlers:
 
             # 根据动作执行操作
             if action == ACTION_DONE:
-                # 完成任务
-                success = self.state_machine.mark_as_done(task_id)
+                # 判断是否有第四个参数（确认标志）
+                if len(parts) > 3 and parts[3] == 'cf':
+                    # 确认完成 - 执行真正的完成操作
+                    success = self.state_machine.mark_as_done(task_id)
 
-                if success:
-                    # 记录回调
-                    self.db.mark_callback_processed(callback_id, task_id, ACTION_DONE)
-                    await query.edit_message_text(get_task_done_message())
+                    if success:
+                        # 记录回调
+                        self.db.mark_callback_processed(callback_id, task_id, ACTION_DONE)
+                        await query.edit_message_text(get_task_done_message())
+                    else:
+                        await query.edit_message_text(get_task_already_processed_message())
                 else:
-                    await query.edit_message_text(get_task_already_processed_message())
+                    # 第一次点击完成 - 显示确认界面
+                    buttons = create_confirm_complete_buttons(task_id)
+                    await query.edit_message_text(
+                        get_confirm_complete_prompt(task.content),
+                        reply_markup=buttons
+                    )
 
             elif action == ACTION_UNDONE:
                 # 未完成 - 弹出顺延按钮
@@ -117,14 +133,33 @@ class CallbackHandlers:
                 )
 
             elif action == ACTION_CANCEL:
-                # 取消任务
-                success = self.state_machine.mark_as_canceled(task_id)
+                # 判断是否有第四个参数（确认标志）
+                if len(parts) > 3 and parts[3] == 'cf':
+                    # 确认取消 - 执行真正的取消操作
+                    success = self.state_machine.mark_as_canceled(task_id)
 
-                if success:
-                    self.db.mark_callback_processed(callback_id, task_id, ACTION_CANCEL)
-                    await query.edit_message_text(get_task_canceled_message())
+                    if success:
+                        self.db.mark_callback_processed(callback_id, task_id, ACTION_CANCEL)
+                        await query.edit_message_text(get_task_canceled_message())
+                    else:
+                        await query.edit_message_text(get_task_already_processed_message())
                 else:
-                    await query.edit_message_text(get_task_already_processed_message())
+                    # 第一次点击取消 - 显示确认界面
+                    buttons = create_confirm_cancel_buttons(task_id)
+                    await query.edit_message_text(
+                        get_confirm_cancel_prompt(task.content),
+                        reply_markup=buttons
+                    )
+
+            elif action == 'back':
+                # 返回原按钮状态
+                buttons = create_task_buttons(task_id)
+                # 恢复原任务信息显示
+                from src.bot.messages import format_task_item
+                await query.edit_message_text(
+                    format_task_item(task),
+                    reply_markup=buttons
+                )
 
             elif action == 'p':
                 # 顺延任务
