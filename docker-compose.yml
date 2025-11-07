@@ -2,7 +2,12 @@ version: '3.8'
 
 services:
   planbot:
-    build: .
+    # 使用 Docker Hub 镜像（GitHub Actions 自动构建）
+    image: jackybruse/telegram-planbot:latest
+
+    # 本地构建选项（如需本地构建，注释上面的 image，取消注释下面的 build）
+    # build: .
+
     container_name: telegram-planbot
     restart: unless-stopped
 
