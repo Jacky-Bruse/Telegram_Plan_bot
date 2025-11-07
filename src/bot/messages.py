@@ -3,8 +3,18 @@ Bot 消息文案模板
 严格按照开发清单第二章的交互稿
 """
 
+import re
+from datetime import datetime, timedelta
 from typing import List
+import pytz
+
 from src.db.models import Task
+from src.constants import (
+    DATE_KEYWORD_TODAY,
+    DATE_KEYWORD_TOMORROW,
+    DATE_KEYWORD_DAY_AFTER_TOMORROW,
+    WEEKDAY_KEYWORDS
+)
 
 
 def get_start_message(tz: str, evening_time: str, morning_time: str) -> str:
@@ -33,6 +43,88 @@ def get_start_message(tz: str, evening_time: str, morning_time: str) -> str:
 /timezone <IANA 名称> 设置时区（如 Asia/Shanghai）"""
 
 
+def _get_relative_date_label(date_str: str, timezone: str = "Asia/Shanghai") -> str:
+    """
+    获取日期的相对时间标签
+
+    Args:
+        date_str: 日期字符串 YYYY-MM-DD
+        timezone: 时区名称
+
+    Returns:
+        相对时间标签，如 " (今天)", " (明天)", " (后天)"，或空字符串
+    """
+    try:
+        tz = pytz.timezone(timezone)
+        today = datetime.now(tz).replace(hour=0, minute=0, second=0, microsecond=0)
+
+        # 解析目标日期
+        target_date = datetime.strptime(date_str, '%Y-%m-%d')
+        target_date = tz.localize(target_date)
+
+        # 计算天数差
+        days_diff = (target_date - today).days
+
+        if days_diff == 0:
+            return " (今天)"
+        elif days_diff == 1:
+            return " (明天)"
+        elif days_diff == 2:
+            return " (后天)"
+        else:
+            return ""
+    except Exception:
+        return ""
+
+
+def _strip_date_keywords(content: str) -> str:
+    """
+    去掉任务内容开头的日期关键词
+
+    Args:
+        content: 任务内容
+
+    Returns:
+        去掉日期关键词后的内容
+    """
+    content = content.strip()
+
+    # 构建所有需要去掉的日期关键词列表
+    keywords_to_strip = []
+
+    # 今天/明天/后天
+    keywords_to_strip.extend(DATE_KEYWORD_TODAY)
+    keywords_to_strip.extend(DATE_KEYWORD_TOMORROW)
+    keywords_to_strip.extend(DATE_KEYWORD_DAY_AFTER_TOMORROW)
+
+    # 周X、星期X、礼拜X、下周X、下星期X、下礼拜X
+    for keyword in WEEKDAY_KEYWORDS.keys():
+        keywords_to_strip.append(keyword)
+        # 下周X、下星期X、下礼拜X
+        keywords_to_strip.append(f"下{keyword}")
+        if keyword.startswith("星期"):
+            keywords_to_strip.append(f"下{keyword}")
+        if keyword.startswith("礼拜"):
+            keywords_to_strip.append(f"下{keyword}")
+
+    # 尝试去掉开头的日期关键词
+    for keyword in keywords_to_strip:
+        if content.startswith(keyword):
+            # 去掉关键词，并去掉后面可能的空格
+            content = content[len(keyword):].strip()
+            break
+
+    # 去掉常见的日期格式（YYYY-MM-DD, MM-DD, MM/DD, MM.DD, +Nd, +Nw）
+    # 这些通常在开头
+    content = re.sub(r'^\d{4}-\d{1,2}-\d{1,2}\s*', '', content)
+    content = re.sub(r'^\d{1,2}-\d{1,2}\s*', '', content)
+    content = re.sub(r'^\d{1,2}/\d{1,2}\s*', '', content)
+    content = re.sub(r'^\d{1,2}\.\d{1,2}\s*', '', content)
+    content = re.sub(r'^\+\d+[dDwW]\s*', '', content)
+
+    return content.strip()
+
+
 def get_daily_review_header(is_makeup: bool = False) -> str:
     """
     获取日终核对的标题
@@ -58,7 +150,9 @@ def format_task_item(task: Task) -> str:
     Returns:
         格式化后的文本，如 "• #12 备份 NAS 配置"
     """
-    return f"• #{task.id} {task.content}"
+    # 去掉任务内容开头的日期关键词
+    clean_content = _strip_date_keywords(task.content)
+    return f"• #{task.id} {clean_content}"
 
 
 def get_new_plan_prompt() -> str:
@@ -113,12 +207,13 @@ def get_week_header() -> str:
     return "📅 未来 7 天："
 
 
-def format_week_tasks(tasks_by_date: dict) -> str:
+def format_week_tasks(tasks_by_date: dict, timezone: str = "Asia/Shanghai") -> str:
     """
     格式化一周任务
 
     Args:
         tasks_by_date: {日期: [任务列表], ...}
+        timezone: 时区名称，用于计算相对时间标签
 
     Returns:
         格式化后的文本
@@ -129,7 +224,9 @@ def format_week_tasks(tasks_by_date: dict) -> str:
     lines = [get_week_header()]
 
     for date_str, tasks in sorted(tasks_by_date.items()):
-        lines.append(f"\n【{date_str}】")
+        # 获取相对时间标签（今天、明天、后天）
+        relative_label = _get_relative_date_label(date_str, timezone)
+        lines.append(f"\n【{date_str}{relative_label}】")
         for task in tasks:
             lines.append(format_task_item(task))
 

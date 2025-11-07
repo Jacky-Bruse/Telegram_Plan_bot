@@ -191,8 +191,8 @@ class BotHandlers:
                 tasks_by_date[task.due_date] = []
             tasks_by_date[task.due_date].append(task)
 
-        # 格式化输出
-        message = format_week_tasks(tasks_by_date)
+        # 格式化输出（传递用户时区以显示相对时间标签）
+        message = format_week_tasks(tasks_by_date, timezone=user.tz)
         await update.message.reply_text(message)
 
     async def cmd_setevening(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
