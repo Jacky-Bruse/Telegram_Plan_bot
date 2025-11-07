@@ -12,9 +12,9 @@ on:
   workflow_dispatch:  # 允许手动触发
 
 env:
-  DOCKER_IMAGE: ${{ secrets.DOCKER_USERNAME }}/telegram-planbot
+  DOCKER_IMAGE: ${{ secrets.DOCKERHUB_USERNAME }}/telegram-planbot
   # 或者使用固定的镜像名（如果你想公开）
-  # DOCKER_IMAGE: yourusername/telegram-planbot
+  # DOCKER_IMAGE: jackybruse/telegram-planbot
 
 jobs:
   build-and-push:
