@@ -27,6 +27,7 @@ from src.bot.keyboards import (
 )
 from src.constants import ACTION_DONE, ACTION_UNDONE, ACTION_CANCEL, ACTION_POSTPONE
 from src.utils.logger import get_logger
+from src.utils.performance import PerformanceLogger
 
 logger = get_logger(__name__)
 
@@ -55,32 +56,42 @@ class CallbackHandlers:
         - 新计划征集：new:<action>
         """
         query = update.callback_query
+        chat_id = update.effective_chat.id
+        perf = PerformanceLogger("handle_callback_query", chat_id)
+
         await query.answer()  # 确认收到回调
+        perf.checkpoint("Telegram确认回调")
 
         callback_id = query.id
         callback_data = query.data
-        chat_id = update.effective_chat.id
 
         logger.info(f"Callback received: chat_id={chat_id}, data={callback_data}")
 
         # 检查是否已处理（防重复点击）
         if self.db.is_callback_processed(callback_id):
             await query.edit_message_text(get_task_already_processed_message())
+            perf.checkpoint("DB检查+Telegram响应(已处理)")
+            perf.finish()
             return
+
+        perf.checkpoint("DB检查回调状态")
 
         # 解析回调数据
         parts = callback_data.split(':')
 
         if parts[0] == 't':
             # 任务操作
-            await self._handle_task_callback(query, parts, callback_id)
+            await self._handle_task_callback(query, parts, callback_id, perf)
         elif parts[0] == 'new':
             # 新计划征集
             await self._handle_new_plan_callback(query, parts, callback_id, context)
+            perf.checkpoint("处理新计划征集")
         else:
             logger.warning(f"Unknown callback data: {callback_data}")
 
-    async def _handle_task_callback(self, query, parts: list, callback_id: str):
+        perf.finish()
+
+    async def _handle_task_callback(self, query, parts: list, callback_id: str, perf: PerformanceLogger):
         """
         处理任务相关的回调
 
@@ -88,6 +99,7 @@ class CallbackHandlers:
             query: 回调查询对象
             parts: 回调数据分割后的列表
             callback_id: 回调 ID
+            perf: 性能日志记录器
         """
         try:
             task_id = int(parts[1])
@@ -95,9 +107,11 @@ class CallbackHandlers:
 
             # 获取任务
             task = self.db.get_task_by_id(task_id)
+            perf.checkpoint("DB查询任务")
 
             if not task:
                 await query.edit_message_text("任务不存在。")
+                perf.checkpoint("Telegram响应(任务不存在)")
                 return
 
             # 根据动作执行操作
@@ -106,13 +120,16 @@ class CallbackHandlers:
                 if len(parts) > 3 and parts[3] == 'cf':
                     # 确认完成 - 执行真正的完成操作
                     success = self.state_machine.mark_as_done(task_id)
+                    perf.checkpoint("DB标记完成")
 
                     if success:
                         # 记录回调
                         self.db.mark_callback_processed(callback_id, task_id, ACTION_DONE)
                         await query.edit_message_text(get_task_done_message(task.content))
+                        perf.checkpoint("DB记录回调+Telegram响应")
                     else:
                         await query.edit_message_text(get_task_already_processed_message())
+                        perf.checkpoint("Telegram响应(已处理)")
                 else:
                     # 第一次点击完成 - 显示确认界面
                     buttons = create_confirm_complete_buttons(task_id)
@@ -120,10 +137,12 @@ class CallbackHandlers:
                         get_confirm_complete_prompt(task.content),
                         reply_markup=buttons
                     )
+                    perf.checkpoint("Telegram显示确认界面")
 
             elif action == ACTION_UNDONE:
                 # 未完成 - 弹出顺延按钮
                 self.db.mark_callback_processed(callback_id, task_id, ACTION_UNDONE)
+                perf.checkpoint("DB记录回调")
 
                 # 替换为顺延按钮（严格按照文档 2.2）
                 buttons = create_postpone_buttons(task_id)
@@ -131,18 +150,22 @@ class CallbackHandlers:
                     get_postpone_prompt(),
                     reply_markup=buttons
                 )
+                perf.checkpoint("Telegram显示顺延按钮")
 
             elif action == ACTION_CANCEL:
                 # 判断是否有第四个参数（确认标志）
                 if len(parts) > 3 and parts[3] == 'cf':
                     # 确认取消 - 执行真正的取消操作
                     success = self.state_machine.mark_as_canceled(task_id)
+                    perf.checkpoint("DB标记取消")
 
                     if success:
                         self.db.mark_callback_processed(callback_id, task_id, ACTION_CANCEL)
                         await query.edit_message_text(get_task_canceled_message(task.content))
+                        perf.checkpoint("DB记录回调+Telegram响应")
                     else:
                         await query.edit_message_text(get_task_already_processed_message())
+                        perf.checkpoint("Telegram响应(已处理)")
                 else:
                     # 第一次点击取消 - 显示确认界面
                     buttons = create_confirm_cancel_buttons(task_id)
@@ -150,6 +173,7 @@ class CallbackHandlers:
                         get_confirm_cancel_prompt(task.content),
                         reply_markup=buttons
                     )
+                    perf.checkpoint("Telegram显示确认界面")
 
             elif action == 'back':
                 # 返回原按钮状态
@@ -160,19 +184,23 @@ class CallbackHandlers:
                     format_task_item(task),
                     reply_markup=buttons
                 )
+                perf.checkpoint("Telegram恢复原界面")
 
             elif action == 'p':
                 # 顺延任务
                 days = int(parts[3])
                 new_due_date = self.state_machine.postpone_task(task_id, days)
+                perf.checkpoint("DB顺延任务")
 
                 if new_due_date:
                     self.db.mark_callback_processed(callback_id, task_id, f"{ACTION_POSTPONE}:{days}")
                     await query.edit_message_text(
                         get_postpone_confirmation_days(days, new_due_date)
                     )
+                    perf.checkpoint("DB记录回调+Telegram响应")
                 else:
                     await query.edit_message_text("顺延失败，请稍后重试。")
+                    perf.checkpoint("Telegram响应(失败)")
 
             else:
                 logger.warning(f"Unknown task action: {action}")
@@ -180,6 +208,7 @@ class CallbackHandlers:
         except (ValueError, IndexError) as e:
             logger.error(f"Invalid callback data format: {parts}, error: {e}")
             await query.edit_message_text("无效的操作。")
+            perf.checkpoint("Telegram响应(无效操作)")
 
     async def _handle_new_plan_callback(
         self,

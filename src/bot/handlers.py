@@ -43,6 +43,7 @@ from src.constants import (
     DEFAULT_MORNING_HOUR, DEFAULT_MORNING_MINUTE,
 )
 from src.utils.logger import get_logger
+from src.utils.performance import PerformanceLogger
 
 logger = get_logger(__name__)
 
@@ -66,10 +67,12 @@ class BotHandlers:
         严格按照文档 2.1 章节实现
         """
         chat_id = update.effective_chat.id
+        perf = PerformanceLogger("cmd_start", chat_id)
         logger.info(f"User {chat_id} triggered /start")
 
         # 检查用户是否已存在
         user = self.db.get_user_by_chat_id(chat_id)
+        perf.checkpoint("DB查询用户")
 
         if user is None:
             # 创建新用户
@@ -81,6 +84,7 @@ class BotHandlers:
                 morning_hour=DEFAULT_MORNING_HOUR,
                 morning_min=DEFAULT_MORNING_MINUTE
             )
+            perf.checkpoint("DB创建用户")
 
             if user is None:
                 await update.message.reply_text("初始化失败，请稍后重试。")
@@ -98,11 +102,17 @@ class BotHandlers:
 
         # 发送欢迎消息（严格按照文档格式）
         message = get_start_message(user.tz, evening_time, morning_time)
+        perf.checkpoint("准备消息")
+
         await update.message.reply_text(message)
+        perf.checkpoint("Telegram发送消息")
 
         # 通知调度器重建 Job（通过 context.bot_data）
         if 'schedule_rebuild_callback' in context.bot_data:
             context.bot_data['schedule_rebuild_callback'](user)
+            perf.checkpoint("重建调度任务")
+
+        perf.finish()
 
     async def cmd_add(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
         """
@@ -111,7 +121,10 @@ class BotHandlers:
         严格按照文档 2.3 和 2.5 章节
         """
         chat_id = update.effective_chat.id
+        perf = PerformanceLogger("cmd_add", chat_id)
+
         user = self.db.get_user_by_chat_id(chat_id)
+        perf.checkpoint("DB查询用户")
 
         if user is None:
             await update.message.reply_text("请先使用 /start 初始化。")
@@ -119,10 +132,13 @@ class BotHandlers:
 
         # 设置用户状态为等待输入
         self.db.set_user_awaiting_plans(user.id, True)
+        perf.checkpoint("DB更新用户状态")
         logger.info(f"User {chat_id} entered input mode")
 
         # 发送输入说明
         await update.message.reply_text(get_input_mode_instructions())
+        perf.checkpoint("Telegram发送消息")
+        perf.finish()
 
     async def cmd_today(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
         """
@@ -131,7 +147,10 @@ class BotHandlers:
         严格按照文档 2.5 章节
         """
         chat_id = update.effective_chat.id
+        perf = PerformanceLogger("cmd_today", chat_id)
+
         user = self.db.get_user_by_chat_id(chat_id)
+        perf.checkpoint("DB查询用户")
 
         if user is None:
             await update.message.reply_text("请先使用 /start 初始化。")
@@ -147,14 +166,19 @@ class BotHandlers:
             today,
             statuses=[STATUS_PENDING, STATUS_MISSED]
         )
+        perf.checkpoint("DB查询任务列表")
 
         if not tasks:
             await update.message.reply_text(get_no_tasks_message())
+            perf.checkpoint("Telegram发送消息")
+            perf.finish()
             return
 
         # 格式化任务列表
         header = get_today_header()
         await send_tasks_with_buttons(context.bot, chat_id, tasks, header)
+        perf.checkpoint("Telegram发送任务列表")
+        perf.finish()
 
     async def cmd_week(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
         """
@@ -433,7 +457,10 @@ class BotHandlers:
         严格按照文档 2.3 章节和 8 章节（异常处理）
         """
         chat_id = update.effective_chat.id
+        perf = PerformanceLogger("handle_text_message", chat_id)
+
         user = self.db.get_user_by_chat_id(chat_id)
+        perf.checkpoint("DB查询用户")
 
         if user is None or not user.awaiting_plans:
             # 不在输入模式，忽略
@@ -474,8 +501,11 @@ class BotHandlers:
             else:
                 logger.error(f"Failed to create task for user {chat_id}: {content}")
 
+        perf.checkpoint(f"DB创建{len(created_tasks)}个任务")
+
         # 退出输入模式
         self.db.set_user_awaiting_plans(user.id, False)
+        perf.checkpoint("DB更新用户状态")
 
         # 发送回执
         if created_tasks:
@@ -488,6 +518,10 @@ class BotHandlers:
                 receipt += "\n" + "\n".join(warnings)
 
             await update.message.reply_text(receipt)
+            perf.checkpoint("Telegram发送回执")
             logger.info(f"User {chat_id} created {len(created_tasks)} tasks")
         else:
             await update.message.reply_text("未能创建任何任务，请检查输入格式。")
+            perf.checkpoint("Telegram发送错误消息")
+
+        perf.finish()

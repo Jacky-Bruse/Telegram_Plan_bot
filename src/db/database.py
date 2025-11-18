@@ -15,6 +15,7 @@ from src.constants import (
     STATUS_PENDING, STATUS_DONE, STATUS_CANCELED, STATUS_MISSED
 )
 from src.utils.logger import get_logger
+from src.utils.performance import perf_timer
 
 logger = get_logger(__name__)
 
@@ -90,8 +91,9 @@ class Database:
             User 对象或 None
         """
         try:
-            with self.get_session() as session:
-                return session.query(User).filter(User.chat_id == chat_id).first()
+            with perf_timer("DB.get_user_by_chat_id", chat_id):
+                with self.get_session() as session:
+                    return session.query(User).filter(User.chat_id == chat_id).first()
         except SQLAlchemyError as e:
             logger.error(f"Database error in get_user_by_chat_id: {e}")
             return None
@@ -279,18 +281,19 @@ class Database:
             创建的 Task 对象，失败返回 None
         """
         try:
-            with self.get_session() as session:
-                task = Task(
-                    user_id=user_id,
-                    content=content,
-                    due_date=due_date,
-                    status=STATUS_PENDING
-                )
-                session.add(task)
-                session.commit()
-                session.refresh(task)
-                logger.info(f"Task created: task_id={task.id}, user_id={user_id}")
-                return task
+            with perf_timer("DB.create_task"):
+                with self.get_session() as session:
+                    task = Task(
+                        user_id=user_id,
+                        content=content,
+                        due_date=due_date,
+                        status=STATUS_PENDING
+                    )
+                    session.add(task)
+                    session.commit()
+                    session.refresh(task)
+                    logger.info(f"Task created: task_id={task.id}, user_id={user_id}")
+                    return task
         except SQLAlchemyError as e:
             logger.error(f"Database error in create_task: {e}")
             return None
@@ -322,18 +325,19 @@ class Database:
             任务列表
         """
         try:
-            with self.get_session() as session:
-                query = session.query(Task).filter(
-                    and_(
-                        Task.user_id == user_id,
-                        Task.due_date == due_date
+            with perf_timer(f"DB.get_tasks_by_user_and_date({due_date})"):
+                with self.get_session() as session:
+                    query = session.query(Task).filter(
+                        and_(
+                            Task.user_id == user_id,
+                            Task.due_date == due_date
+                        )
                     )
-                )
 
-                if statuses:
-                    query = query.filter(Task.status.in_(statuses))
+                    if statuses:
+                        query = query.filter(Task.status.in_(statuses))
 
-                return query.order_by(Task.id).all()
+                    return query.order_by(Task.id).all()
         except SQLAlchemyError as e:
             logger.error(f"Database error in get_tasks_by_user_and_date: {e}")
             return []
@@ -393,20 +397,21 @@ class Database:
             是否成功
         """
         try:
-            with self.get_session() as session:
-                task = session.query(Task).filter(Task.id == task_id).first()
-                if task:
-                    task.status = status
+            with perf_timer(f"DB.update_task_status(status={status})"):
+                with self.get_session() as session:
+                    task = session.query(Task).filter(Task.id == task_id).first()
+                    if task:
+                        task.status = status
 
-                    if status == STATUS_DONE:
-                        task.completed_at = timestamp or datetime.utcnow()
-                    elif status == STATUS_CANCELED:
-                        task.canceled_at = timestamp or datetime.utcnow()
+                        if status == STATUS_DONE:
+                            task.completed_at = timestamp or datetime.utcnow()
+                        elif status == STATUS_CANCELED:
+                            task.canceled_at = timestamp or datetime.utcnow()
 
-                    session.commit()
-                    logger.info(f"Task status updated: task_id={task_id}, status={status}")
-                    return True
-                return False
+                        session.commit()
+                        logger.info(f"Task status updated: task_id={task_id}, status={status}")
+                        return True
+                    return False
         except SQLAlchemyError as e:
             logger.error(f"Database error in update_task_status: {e}")
             return False
