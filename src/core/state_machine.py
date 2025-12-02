@@ -15,6 +15,7 @@ pending → (done | canceled | missed)
 from datetime import datetime, timedelta
 from typing import Optional
 
+from src.core.date_parser import DateParser
 from src.constants import (
     STATUS_PENDING, STATUS_DONE, STATUS_CANCELED, STATUS_MISSED
 )
@@ -98,15 +99,13 @@ class TaskStateMachine:
             logger.warning(f"Task not found: task_id={task_id}")
             return None
 
-        # 解析当前到期日期
-        try:
-            current_due = datetime.strptime(task.due_date, '%Y-%m-%d')
-        except ValueError:
-            logger.error(f"Invalid due_date format: task_id={task_id}, due_date={task.due_date}")
-            return None
+        # 获取用户时区，基于今天计算新到期日期
+        user = self.db.get_user_by_id(task.user_id)
+        timezone = user.tz if user else "Asia/Shanghai"
+        today = DateParser(timezone).get_today()
 
-        # 计算新的到期日期
-        new_due = current_due + timedelta(days=days)
+        # 计算新的到期日期（基于今天 + 顺延天数）
+        new_due = today + timedelta(days=days)
         new_due_str = new_due.strftime('%Y-%m-%d')
 
         # 更新数据库
