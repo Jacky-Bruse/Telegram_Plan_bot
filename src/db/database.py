@@ -342,6 +342,72 @@ class Database:
             logger.error(f"Database error in get_tasks_by_user_and_date: {e}")
             return []
 
+    def get_overdue_tasks(
+        self,
+        user_id: int,
+        today: str,
+        statuses: Optional[List[str]] = None
+    ) -> List[Task]:
+        """
+        获取用户的逾期任务（due_date < today 且状态为 pending）
+
+        Args:
+            user_id: 用户 ID
+            today: 今天的日期（YYYY-MM-DD）
+            statuses: 状态列表（可选，默认只查 pending）
+
+        Returns:
+            逾期任务列表，按 due_date 升序排列
+        """
+        if statuses is None:
+            statuses = [STATUS_PENDING]
+
+        try:
+            with self.get_session() as session:
+                return session.query(Task).filter(
+                    and_(
+                        Task.user_id == user_id,
+                        Task.due_date < today,
+                        Task.status.in_(statuses)
+                    )
+                ).order_by(Task.due_date, Task.id).all()
+        except SQLAlchemyError as e:
+            logger.error(f"Database error in get_overdue_tasks: {e}")
+            return []
+
+    def count_overdue_tasks(
+        self,
+        user_id: int,
+        today: str,
+        statuses: Optional[List[str]] = None
+    ) -> int:
+        """
+        统计用户的逾期任务数量
+
+        Args:
+            user_id: 用户 ID
+            today: 今天的日期（YYYY-MM-DD）
+            statuses: 状态列表（可选，默认只查 pending）
+
+        Returns:
+            逾期任务数量
+        """
+        if statuses is None:
+            statuses = [STATUS_PENDING]
+
+        try:
+            with self.get_session() as session:
+                return session.query(Task).filter(
+                    and_(
+                        Task.user_id == user_id,
+                        Task.due_date < today,
+                        Task.status.in_(statuses)
+                    )
+                ).count()
+        except SQLAlchemyError as e:
+            logger.error(f"Database error in count_overdue_tasks: {e}")
+            return 0
+
     def get_tasks_by_user_and_date_range(
         self,
         user_id: int,

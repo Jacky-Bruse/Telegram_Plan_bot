@@ -19,6 +19,9 @@ from src.bot.messages import (
     format_task_item,
     get_new_plan_prompt,
     get_morning_checklist_header,
+    get_overdue_review_header,
+    get_overdue_warning,
+    format_overdue_task_item,
 )
 from src.bot.keyboards import create_new_plan_buttons
 from src.bot.task_sender import send_tasks_with_buttons
@@ -153,8 +156,9 @@ class TaskScheduler:
     async def _evening_routine(self, user_id: int):
         """
         晚间例行任务
-        1. 推送日终核对（当日到期任务）
-        2. 推送新计划征集（当晚只问1次）
+        1. 推送逾期未清任务（如有）
+        2. 推送日终核对（当日到期任务）
+        3. 推送新计划征集（当晚只问1次）
         严格按照文档第 2.2-2.3 章节
         """
         logger.info(f"Evening routine triggered for user_id={user_id}")
@@ -175,7 +179,12 @@ class TaskScheduler:
         tz = pytz.timezone(user.tz)
         today = datetime.now(tz).strftime('%Y-%m-%d')
 
-        # 1. 日终核对：获取当日到期的 pending/missed 任务
+        # 1. 逾期未清：获取 due_date < today 的 pending 任务
+        overdue_tasks = self.db.get_overdue_tasks(user.id, today)
+        if overdue_tasks:
+            await self._send_overdue_review(chat_id, overdue_tasks)
+
+        # 2. 日终核对：获取当日到期的 pending/missed 任务
         tasks = self.db.get_tasks_by_user_and_date(
             user.id,
             today,
@@ -186,7 +195,7 @@ class TaskScheduler:
             # 发送日终核对（分批发送，每批最多 MAX_TASKS_PER_MESSAGE 项）
             await self._send_daily_review(chat_id, tasks, is_makeup=False)
 
-        # 2. 新计划征集（当晚只问 1 次）
+        # 3. 新计划征集（当晚只问 1 次）
         # 重新获取用户对象，因为 skipped_tonight 可能在按钮回调中被修改
         user = self.db.get_user_by_id(user_id)
         if user and not user.skipped_tonight:
@@ -197,8 +206,9 @@ class TaskScheduler:
     async def _morning_checklist(self, user_id: int):
         """
         早间清单任务
-        推送当日 pending/missed 任务
-        若无则不发（静默）
+        1. 显示逾期任务数量提示（如有）
+        2. 推送当日 pending/missed 任务
+        若无任何任务则不发（静默）
         严格按照文档第 2.4 章节
         """
         logger.info(f"Morning checklist triggered for user_id={user_id}")
@@ -215,6 +225,9 @@ class TaskScheduler:
         tz = pytz.timezone(user.tz)
         today = datetime.now(tz).strftime('%Y-%m-%d')
 
+        # 获取逾期任务数量
+        overdue_count = self.db.count_overdue_tasks(user.id, today)
+
         # 获取当日 pending/missed 任务
         tasks = self.db.get_tasks_by_user_and_date(
             user.id,
@@ -222,20 +235,49 @@ class TaskScheduler:
             statuses=[STATUS_PENDING, STATUS_MISSED]
         )
 
-        if not tasks:
-            # 若无任务，不发送（静默）
+        # 若无逾期任务也无今日任务，静默
+        if not tasks and overdue_count == 0:
             logger.info(f"No tasks for morning checklist: user_id={user_id}")
             return
 
-        # 发送早间清单
-        lines = [get_morning_checklist_header()]
-        for task in tasks:
-            lines.append(format_task_item(task))
+        # 构建消息
+        lines = []
+
+        # 1. 逾期任务提示（如有）
+        if overdue_count > 0:
+            lines.append(get_overdue_warning(overdue_count))
+            lines.append("")  # 空行分隔
+
+        # 2. 今日待办（如有）
+        if tasks:
+            lines.append(get_morning_checklist_header())
+            for task in tasks:
+                lines.append(format_task_item(task))
 
         message = "\n".join(lines)
         await self.bot.send_message(chat_id=chat_id, text=message)
 
-        logger.info(f"Morning checklist sent to user_id={user_id}, tasks_count={len(tasks)}")
+        logger.info(
+            f"Morning checklist sent to user_id={user_id}, "
+            f"overdue_count={overdue_count}, today_tasks_count={len(tasks)}"
+        )
+
+    async def _send_overdue_review(self, chat_id: int, tasks: list):
+        """
+        发送逾期未清任务
+        使用与日终核对相同的分批策略，带完整交互按钮
+
+        Args:
+            chat_id: Telegram chat_id
+            tasks: 逾期任务列表
+        """
+        header = get_overdue_review_header()
+        await send_tasks_with_buttons(
+            self.bot, chat_id, tasks, header,
+            format_func=format_overdue_task_item
+        )
+
+        logger.info(f"Overdue review sent to chat_id={chat_id}, tasks_count={len(tasks)}")
 
     async def _send_daily_review(self, chat_id: int, tasks: list, is_makeup: bool):
         """

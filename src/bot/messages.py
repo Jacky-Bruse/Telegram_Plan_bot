@@ -209,6 +209,42 @@ def get_morning_checklist_header() -> str:
     return "🌅 今日待办："
 
 
+def get_overdue_review_header() -> str:
+    """获取逾期任务区块的标题"""
+    return "⚠️ 逾期未清（需要处理）："
+
+
+def get_overdue_warning(count: int) -> str:
+    """
+    获取早间清单的逾期任务提示（仅数量，无按钮）
+
+    Args:
+        count: 逾期任务数量
+
+    Returns:
+        提示文本
+    """
+    return f"⚠️ 有 {count} 项逾期任务需要处理"
+
+
+def format_overdue_task_item(task: Task, index: int = None) -> str:
+    """
+    格式化逾期任务条目（带原定日期）
+
+    Args:
+        task: 任务对象
+        index: 显示序号（如果为None则使用task.id）
+
+    Returns:
+        格式化后的文本，如 "• #1 备份 NAS 配置（原定 11-08）"
+    """
+    clean_content = _strip_date_keywords(task.content)
+    display_id = index if index is not None else task.id
+    # 将 YYYY-MM-DD 转换为 MM-DD 格式
+    due_date_short = task.due_date[5:]  # 去掉年份，只保留 MM-DD
+    return f"• #{display_id} {clean_content}（原定 {due_date_short}）"
+
+
 def get_no_tasks_message() -> str:
     """获取无任务时的提示"""
     return "今天没有待办 ✅"
