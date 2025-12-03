@@ -547,6 +547,106 @@ class Database:
             logger.error(f"Database error in mark_callback_processed: {e}")
             return False
 
+    # ==================== 批量操作方法（性能优化） ====================
+
+    def complete_task_with_callback(
+        self,
+        task_id: int,
+        status: str,
+        callback_id: str,
+        action: str,
+        timestamp: Optional[datetime] = None
+    ) -> bool:
+        """
+        单事务完成任务状态更新并记录回调（性能优化）
+
+        Args:
+            task_id: 任务 ID
+            status: 新状态 (done/canceled)
+            callback_id: 回调 ID
+            action: 动作类型
+            timestamp: 时间戳（可选）
+
+        Returns:
+            是否成功
+        """
+        try:
+            with perf_timer(f"DB.complete_task_with_callback(status={status})"):
+                with self.get_session() as session:
+                    # 更新任务状态
+                    task = session.query(Task).filter(Task.id == task_id).first()
+                    if not task:
+                        return False
+
+                    task.status = status
+                    if status == STATUS_DONE:
+                        task.completed_at = timestamp or datetime.utcnow()
+                    elif status == STATUS_CANCELED:
+                        task.canceled_at = timestamp or datetime.utcnow()
+
+                    # 记录回调
+                    callback = Callback(
+                        callback_id=callback_id,
+                        task_id=task_id,
+                        action=action
+                    )
+                    session.add(callback)
+
+                    session.commit()
+                    logger.info(f"Task completed with callback: task_id={task_id}, status={status}")
+                    return True
+        except SQLAlchemyError as e:
+            logger.error(f"Database error in complete_task_with_callback: {e}")
+            return False
+
+    def postpone_task_with_callback(
+        self,
+        task_id: int,
+        new_due_date: str,
+        callback_id: str,
+        action: str
+    ) -> bool:
+        """
+        单事务顺延任务并记录回调（性能优化）
+
+        Args:
+            task_id: 任务 ID
+            new_due_date: 新到期日期（YYYY-MM-DD）
+            callback_id: 回调 ID
+            action: 动作类型
+
+        Returns:
+            是否成功
+        """
+        try:
+            with perf_timer(f"DB.postpone_task_with_callback(new_due={new_due_date})"):
+                with self.get_session() as session:
+                    # 更新任务
+                    task = session.query(Task).filter(Task.id == task_id).first()
+                    if not task:
+                        return False
+
+                    task.due_date = new_due_date
+                    task.status = STATUS_PENDING  # 确保状态为 pending
+
+                    # 记录回调
+                    callback = Callback(
+                        callback_id=callback_id,
+                        task_id=task_id,
+                        action=action
+                    )
+                    session.add(callback)
+
+                    session.commit()
+                    logger.info(
+                        f"Task postponed with callback: task_id={task_id}, "
+                        f"new_due_date={new_due_date}"
+                    )
+                    return True
+        except SQLAlchemyError as e:
+            logger.error(f"Database error in postpone_task_with_callback: {e}")
+            return False
+
 
 # 全局数据库实例
 _db_instance: Optional[Database] = None

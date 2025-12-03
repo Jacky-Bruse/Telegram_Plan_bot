@@ -13,7 +13,7 @@ pending → (done | canceled | missed)
 """
 
 from datetime import datetime, timedelta
-from typing import Optional
+from typing import Optional, TYPE_CHECKING
 
 from src.core.date_parser import DateParser
 from src.constants import (
@@ -21,6 +21,9 @@ from src.constants import (
 )
 from src.db.database import Database
 from src.utils.logger import get_logger, log_task_operation
+
+if TYPE_CHECKING:
+    from src.db.models import Task, User
 
 logger = get_logger(__name__)
 
@@ -37,17 +40,20 @@ class TaskStateMachine:
         """
         self.db = db
 
-    def mark_as_done(self, task_id: int) -> bool:
+    def mark_as_done(self, task_id: int, task: Optional["Task"] = None) -> bool:
         """
         标记任务为完成
 
         Args:
             task_id: 任务 ID
+            task: 已查询的任务对象（可选，避免重复查询）
 
         Returns:
             是否成功
         """
-        task = self.db.get_task_by_id(task_id)
+        if task is None:
+            task = self.db.get_task_by_id(task_id)
+
         if not task:
             logger.warning(f"Task not found: task_id={task_id}")
             return False
@@ -60,17 +66,20 @@ class TaskStateMachine:
         log_task_operation(logger, "mark_as_done", task_id, task.user_id)
         return True
 
-    def mark_as_canceled(self, task_id: int) -> bool:
+    def mark_as_canceled(self, task_id: int, task: Optional["Task"] = None) -> bool:
         """
         标记任务为取消
 
         Args:
             task_id: 任务 ID
+            task: 已查询的任务对象（可选，避免重复查询）
 
         Returns:
             是否成功
         """
-        task = self.db.get_task_by_id(task_id)
+        if task is None:
+            task = self.db.get_task_by_id(task_id)
+
         if not task:
             logger.warning(f"Task not found: task_id={task_id}")
             return False
@@ -83,24 +92,35 @@ class TaskStateMachine:
         log_task_operation(logger, "mark_as_canceled", task_id, task.user_id)
         return True
 
-    def postpone_task(self, task_id: int, days: int) -> Optional[str]:
+    def postpone_task(
+        self,
+        task_id: int,
+        days: int,
+        task: Optional["Task"] = None,
+        user: Optional["User"] = None
+    ) -> Optional[str]:
         """
         顺延任务
 
         Args:
             task_id: 任务 ID
             days: 顺延天数
+            task: 已查询的任务对象（可选，避免重复查询）
+            user: 已查询的用户对象（可选，避免重复查询）
 
         Returns:
             新的到期日期（YYYY-MM-DD），失败返回 None
         """
-        task = self.db.get_task_by_id(task_id)
+        if task is None:
+            task = self.db.get_task_by_id(task_id)
+
         if not task:
             logger.warning(f"Task not found: task_id={task_id}")
             return None
 
         # 获取用户时区，基于今天计算新到期日期
-        user = self.db.get_user_by_id(task.user_id)
+        if user is None:
+            user = self.db.get_user_by_id(task.user_id)
         timezone = user.tz if user else "Asia/Shanghai"
         today = DateParser(timezone).get_today()
 
@@ -124,6 +144,28 @@ class TaskStateMachine:
         )
 
         return new_due_str
+
+    def calculate_postpone_date(
+        self,
+        days: int,
+        user: Optional["User"] = None,
+        timezone: str = "Asia/Shanghai"
+    ) -> str:
+        """
+        计算顺延后的日期（不执行数据库操作）
+
+        Args:
+            days: 顺延天数
+            user: 用户对象（可选，用于获取时区）
+            timezone: 时区（如果没有用户对象）
+
+        Returns:
+            新的到期日期（YYYY-MM-DD）
+        """
+        tz = user.tz if user else timezone
+        today = DateParser(tz).get_today()
+        new_due = today + timedelta(days=days)
+        return new_due.strftime('%Y-%m-%d')
 
     def mark_as_missed(self, task_id: int) -> bool:
         """
