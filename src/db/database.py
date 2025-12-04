@@ -563,11 +563,14 @@ class Database:
         callback_id: str,
         task_id: int,
         action: str
-    ) -> bool:
-        """标记回调已处理
+    ) -> Literal["ok", "duplicate", "error"]:
+        """
+        标记回调已处理
 
         Returns:
-            是否成功
+            "ok": 成功记录
+            "duplicate": 回调已存在（重复点击）
+            "error": 数据库错误
         """
         try:
             with self.get_session() as session:
@@ -578,14 +581,14 @@ class Database:
                 )
                 session.add(callback)
                 session.commit()
-                return True
+                return "ok"
         except IntegrityError:
-            # 唯一约束冲突 - 回调已处理，视为成功
+            # 唯一约束冲突 - 回调已处理
             logger.debug(f"Callback already processed: {callback_id}")
-            return True
+            return "duplicate"
         except SQLAlchemyError as e:
             logger.error(f"Database error in mark_callback_processed: {e}")
-            return False
+            return "error"
 
     # ==================== 批量操作方法（性能优化） ====================
 

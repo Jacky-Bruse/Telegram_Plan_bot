@@ -216,11 +216,22 @@ class CallbackHandlers:
     async def _handle_undone_action(self, query, task_id: int, callback_id: str, perf: PerformanceLogger):
         """处理未完成操作 - 显示顺延按钮"""
         # 记录回调（异步）
-        await run_in_executor(
+        result = await run_in_executor(
             self.db.mark_callback_processed,
             callback_id, task_id, ACTION_UNDONE
         )
         perf.checkpoint("DB记录回调(async)")
+
+        if result == "duplicate":
+            await query.edit_message_text(get_task_already_processed_message())
+            perf.checkpoint("Telegram响应(重复点击)")
+            return
+
+        if result == "error":
+            logger.warning(f"DB error when marking undone callback: task_id={task_id}")
+            await query.edit_message_text("操作失败，请稍后重试。")
+            perf.checkpoint("Telegram响应(DB错误)")
+            return
 
         # 替换为顺延按钮（严格按照文档 2.2）
         buttons = create_postpone_buttons(task_id)
@@ -337,10 +348,22 @@ class CallbackHandlers:
 
         if action == 'add':
             # 现在录入 - 进入一次性输入模式（异步执行）
-            await run_in_executor(
+            result = await run_in_executor(
                 self.db.mark_callback_processed,
                 callback_id, 0, 'new_add'
             )
+
+            if result == "duplicate":
+                await query.edit_message_text(get_task_already_processed_message())
+                perf.checkpoint("Telegram响应(重复点击)")
+                return
+
+            if result == "error":
+                logger.warning(f"DB error when marking new_add callback: chat_id={chat_id}")
+                await query.edit_message_text("操作失败，请稍后重试。")
+                perf.checkpoint("Telegram响应(DB错误)")
+                return
+
             await run_in_executor(
                 self.db.set_user_awaiting_plans,
                 user.id, True
@@ -353,10 +376,22 @@ class CallbackHandlers:
 
         elif action == 'skip':
             # 稍后再说 - 设置当晚已跳过标记（异步执行）
-            await run_in_executor(
+            result = await run_in_executor(
                 self.db.mark_callback_processed,
                 callback_id, 0, 'new_skip'
             )
+
+            if result == "duplicate":
+                await query.edit_message_text(get_task_already_processed_message())
+                perf.checkpoint("Telegram响应(重复点击)")
+                return
+
+            if result == "error":
+                logger.warning(f"DB error when marking new_skip callback: chat_id={chat_id}")
+                await query.edit_message_text("操作失败，请稍后重试。")
+                perf.checkpoint("Telegram响应(DB错误)")
+                return
+
             await run_in_executor(
                 self.db.set_user_skipped_tonight,
                 user.id, True
