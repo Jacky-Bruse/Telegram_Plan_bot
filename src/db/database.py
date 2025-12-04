@@ -5,10 +5,10 @@
 
 from datetime import datetime, date
 from pathlib import Path
-from typing import List, Optional, Tuple
+from typing import List, Optional, Tuple, Literal
 from sqlalchemy import create_engine, and_
 from sqlalchemy.orm import sessionmaker, Session
-from sqlalchemy.exc import SQLAlchemyError
+from sqlalchemy.exc import SQLAlchemyError, IntegrityError
 
 from src.db.models import Base, User, Task, Callback
 from src.constants import (
@@ -512,7 +512,11 @@ class Database:
     # ==================== Callback CRUD ====================
 
     def is_callback_processed(self, callback_id: str) -> bool:
-        """检查回调是否已处理（防重复点击）"""
+        """
+        检查回调是否已处理（防重复点击）
+
+        注意：此方法保留用于向后兼容，但推荐使用 try_mark_callback_processed
+        """
         try:
             with self.get_session() as session:
                 return session.query(Callback).filter(
@@ -521,6 +525,38 @@ class Database:
         except SQLAlchemyError as e:
             logger.error(f"Database error in is_callback_processed: {e}")
             return False
+
+    def try_mark_callback_processed(
+        self,
+        callback_id: str,
+        task_id: int,
+        action: str
+    ) -> Literal["ok", "duplicate", "error"]:
+        """
+        尝试标记回调已处理（利用唯一约束去重，省去查询步骤）
+
+        Returns:
+            "ok": 成功记录
+            "duplicate": 回调已存在（重复点击）
+            "error": 数据库错误
+        """
+        try:
+            with self.get_session() as session:
+                callback = Callback(
+                    callback_id=callback_id,
+                    task_id=task_id,
+                    action=action
+                )
+                session.add(callback)
+                session.commit()
+                return "ok"
+        except IntegrityError:
+            # 唯一约束冲突 - 回调已处理
+            logger.debug(f"Callback already processed: {callback_id}")
+            return "duplicate"
+        except SQLAlchemyError as e:
+            logger.error(f"Database error in try_mark_callback_processed: {e}")
+            return "error"
 
     def mark_callback_processed(
         self,
@@ -543,6 +579,10 @@ class Database:
                 session.add(callback)
                 session.commit()
                 return True
+        except IntegrityError:
+            # 唯一约束冲突 - 回调已处理，视为成功
+            logger.debug(f"Callback already processed: {callback_id}")
+            return True
         except SQLAlchemyError as e:
             logger.error(f"Database error in mark_callback_processed: {e}")
             return False
@@ -556,9 +596,11 @@ class Database:
         callback_id: str,
         action: str,
         timestamp: Optional[datetime] = None
-    ) -> bool:
+    ) -> Literal["ok", "duplicate", "not_found", "error"]:
         """
         单事务完成任务状态更新并记录回调（性能优化）
+
+        利用 callback_id 唯一约束实现去重，无需预先查询
 
         Args:
             task_id: 任务 ID
@@ -568,7 +610,10 @@ class Database:
             timestamp: 时间戳（可选）
 
         Returns:
-            是否成功
+            "ok": 成功
+            "duplicate": 重复点击（回调已处理）
+            "not_found": 任务不存在
+            "error": 数据库错误
         """
         try:
             with perf_timer(f"DB.complete_task_with_callback(status={status})"):
@@ -576,7 +621,7 @@ class Database:
                     # 更新任务状态
                     task = session.query(Task).filter(Task.id == task_id).first()
                     if not task:
-                        return False
+                        return "not_found"
 
                     task.status = status
                     if status == STATUS_DONE:
@@ -584,7 +629,7 @@ class Database:
                     elif status == STATUS_CANCELED:
                         task.canceled_at = timestamp or datetime.utcnow()
 
-                    # 记录回调
+                    # 记录回调（利用唯一约束去重）
                     callback = Callback(
                         callback_id=callback_id,
                         task_id=task_id,
@@ -594,10 +639,14 @@ class Database:
 
                     session.commit()
                     logger.info(f"Task completed with callback: task_id={task_id}, status={status}")
-                    return True
+                    return "ok"
+        except IntegrityError:
+            # 唯一约束冲突 - 回调已处理（重复点击）
+            logger.debug(f"Duplicate callback in complete_task: {callback_id}")
+            return "duplicate"
         except SQLAlchemyError as e:
             logger.error(f"Database error in complete_task_with_callback: {e}")
-            return False
+            return "error"
 
     def postpone_task_with_callback(
         self,
@@ -605,9 +654,11 @@ class Database:
         new_due_date: str,
         callback_id: str,
         action: str
-    ) -> bool:
+    ) -> Literal["ok", "duplicate", "not_found", "error"]:
         """
         单事务顺延任务并记录回调（性能优化）
+
+        利用 callback_id 唯一约束实现去重，无需预先查询
 
         Args:
             task_id: 任务 ID
@@ -616,7 +667,10 @@ class Database:
             action: 动作类型
 
         Returns:
-            是否成功
+            "ok": 成功
+            "duplicate": 重复点击（回调已处理）
+            "not_found": 任务不存在
+            "error": 数据库错误
         """
         try:
             with perf_timer(f"DB.postpone_task_with_callback(new_due={new_due_date})"):
@@ -624,12 +678,12 @@ class Database:
                     # 更新任务
                     task = session.query(Task).filter(Task.id == task_id).first()
                     if not task:
-                        return False
+                        return "not_found"
 
                     task.due_date = new_due_date
                     task.status = STATUS_PENDING  # 确保状态为 pending
 
-                    # 记录回调
+                    # 记录回调（利用唯一约束去重）
                     callback = Callback(
                         callback_id=callback_id,
                         task_id=task_id,
@@ -642,10 +696,14 @@ class Database:
                         f"Task postponed with callback: task_id={task_id}, "
                         f"new_due_date={new_due_date}"
                     )
-                    return True
+                    return "ok"
+        except IntegrityError:
+            # 唯一约束冲突 - 回调已处理（重复点击）
+            logger.debug(f"Duplicate callback in postpone_task: {callback_id}")
+            return "duplicate"
         except SQLAlchemyError as e:
             logger.error(f"Database error in postpone_task_with_callback: {e}")
-            return False
+            return "error"
 
 
 # 全局数据库实例
