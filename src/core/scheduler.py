@@ -4,6 +4,7 @@
 严格按照文档第 6 章的 Job 规则
 """
 
+import asyncio
 from datetime import datetime, timedelta
 from typing import Optional
 import pytz
@@ -21,9 +22,10 @@ from src.bot.messages import (
     get_morning_checklist_header,
     get_overdue_review_header,
     get_overdue_warning,
+    get_overdue_snooze_hint,
     format_overdue_task_item,
 )
-from src.bot.keyboards import create_new_plan_buttons
+from src.bot.keyboards import create_new_plan_buttons, create_overdue_snooze_buttons
 from src.bot.task_sender import send_tasks_with_buttons
 from src.constants import STATUS_PENDING, STATUS_MISSED
 from src.utils.logger import get_logger
@@ -44,7 +46,7 @@ class TaskScheduler:
         """
         self.bot = bot
         self.db = db
-        self.scheduler = AsyncIOScheduler(timezone='UTC')
+        self.scheduler = AsyncIOScheduler(timezone='UTC', event_loop=asyncio.get_running_loop())
 
         logger.info("Scheduler initialized")
 
@@ -77,6 +79,8 @@ class TaskScheduler:
         if user.morning_hour is not None and user.morning_hour >= 0:
             self._schedule_morning_job(user)
 
+        self._schedule_midnight_job(user)
+
         logger.info(
             f"Jobs rebuilt for user {user.chat_id}: "
             f"evening={user.evening_hour:02d}:{user.evening_min:02d}, "
@@ -100,12 +104,16 @@ class TaskScheduler:
         """移除用户的所有 Job"""
         evening_job_id = f"evening_{user_id}"
         morning_job_id = f"morning_{user_id}"
+        midnight_job_id = f"midnight_{user_id}"
 
         if self.scheduler.get_job(evening_job_id):
             self.scheduler.remove_job(evening_job_id)
 
         if self.scheduler.get_job(morning_job_id):
             self.scheduler.remove_job(morning_job_id)
+
+        if self.scheduler.get_job(midnight_job_id):
+            self.scheduler.remove_job(midnight_job_id)
 
     def _schedule_evening_job(self, user: User):
         """
@@ -153,6 +161,42 @@ class TaskScheduler:
             replace_existing=True
         )
 
+    def _schedule_midnight_job(self, user: User):
+        """?????????? Job????? 00:00?"""
+        job_id = f"midnight_{user.id}"
+        tz = pytz.timezone(user.tz)
+
+        trigger = CronTrigger(
+            hour=0,
+            minute=0,
+            timezone=tz
+        )
+
+        self.scheduler.add_job(
+            self._midnight_rollover,
+            trigger=trigger,
+            id=job_id,
+            args=[user.id],
+            replace_existing=True
+        )
+
+    async def _midnight_rollover(self, user_id: int):
+        """??????????????? missed"""
+        logger.info(f"Midnight rollover triggered for user_id={user_id}")
+
+        user = self.db.get_user_by_id(user_id)
+        if not user:
+            logger.warning(f"User not found: user_id={user_id}")
+            return
+
+        tz = pytz.timezone(user.tz)
+        today = datetime.now(tz).strftime('%Y-%m-%d')
+
+        updated = self.db.mark_overdue_tasks_as_missed(user.id, today)
+        logger.info(
+            f"Midnight rollover completed: user_id={user.id}, updated={updated}"
+        )
+
     async def _evening_routine(self, user_id: int):
         """
         晚间例行任务
@@ -178,10 +222,11 @@ class TaskScheduler:
         # 获取用户时区的今天日期
         tz = pytz.timezone(user.tz)
         today = datetime.now(tz).strftime('%Y-%m-%d')
+        snoozed = user.overdue_snooze_date == today
 
         # 1. 逾期未清：获取 due_date < today 的 pending 任务
         overdue_tasks = self.db.get_overdue_tasks(user.id, today)
-        if overdue_tasks:
+        if overdue_tasks and not snoozed:
             await self._send_overdue_review(chat_id, overdue_tasks)
 
         # 2. 日终核对：获取当日到期的 pending/missed 任务
@@ -224,6 +269,7 @@ class TaskScheduler:
         # 获取用户时区的今天日期
         tz = pytz.timezone(user.tz)
         today = datetime.now(tz).strftime('%Y-%m-%d')
+        snoozed = user.overdue_snooze_date == today
 
         # 获取逾期任务数量
         overdue_count = self.db.count_overdue_tasks(user.id, today)
@@ -236,16 +282,18 @@ class TaskScheduler:
         )
 
         # 若无逾期任务也无今日任务，静默
-        if not tasks and overdue_count == 0:
+        if not tasks and (overdue_count == 0 or snoozed):
             logger.info(f"No tasks for morning checklist: user_id={user_id}")
             return
 
         # 构建消息
         lines = []
+        show_overdue = overdue_count > 0 and not snoozed
 
         # 1. 逾期任务提示（如有）
-        if overdue_count > 0:
+        if show_overdue:
             lines.append(get_overdue_warning(overdue_count))
+            lines.append(get_overdue_snooze_hint())
             lines.append("")  # 空行分隔
 
         # 2. 今日待办（如有）
@@ -255,7 +303,8 @@ class TaskScheduler:
                 lines.append(format_task_item(task))
 
         message = "\n".join(lines)
-        await self.bot.send_message(chat_id=chat_id, text=message)
+        buttons = create_overdue_snooze_buttons() if show_overdue else None
+        await self.bot.send_message(chat_id=chat_id, text=message, reply_markup=buttons)
 
         logger.info(
             f"Morning checklist sent to user_id={user_id}, "

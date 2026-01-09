@@ -49,6 +49,9 @@ class User(Base):
     # 是否已跳过当晚新计划征集（每天重置）
     skipped_tonight = Column(Boolean, nullable=False, default=False)
 
+    # 过期提醒“今日不再提醒”日期（YYYY-MM-DD）
+    overdue_snooze_date = Column(String(10), nullable=True)
+
     # 创建时间
     created_at = Column(DateTime, nullable=False, default=datetime.utcnow)
 

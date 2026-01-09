@@ -38,7 +38,8 @@ class Database:
         self.engine = create_engine(
             f'sqlite:///{db_path}',
             echo=False,  # 生产环境不输出 SQL
-            pool_pre_ping=True  # 连接池预检测
+            pool_pre_ping=True,  # 连接池预检测
+            connect_args={"check_same_thread": False}
         )
 
         # 创建会话工厂
@@ -55,7 +56,22 @@ class Database:
     def init_db(self):
         """创建所有表"""
         Base.metadata.create_all(bind=self.engine)
+        self._ensure_schema()
         logger.info("Database tables created")
+
+    def _ensure_schema(self):
+        """?????????????"""
+        try:
+            with self.engine.connect() as conn:
+                result = conn.exec_driver_sql("PRAGMA table_info(users)")
+                cols = [row[1] for row in result]
+                if not cols:
+                    return
+                if "overdue_snooze_date" not in cols:
+                    conn.exec_driver_sql("ALTER TABLE users ADD COLUMN overdue_snooze_date VARCHAR(10)")
+                    logger.info("Database schema updated: users.overdue_snooze_date")
+        except SQLAlchemyError as e:
+            logger.error(f"Database error in _ensure_schema: {e}")
 
     def get_session(self) -> Session:
         """获取数据库会话"""
@@ -252,6 +268,24 @@ class Database:
             logger.error(f"Database error in set_user_skipped_tonight: {e}")
             return False
 
+    def set_user_overdue_snooze_date(self, user_id: int, date_str: Optional[str]) -> bool:
+        """??????????????
+
+        Returns:
+            ????
+        """
+        try:
+            with self.get_session() as session:
+                user = session.query(User).filter(User.id == user_id).first()
+                if user:
+                    user.overdue_snooze_date = date_str
+                    session.commit()
+                    return True
+                return False
+        except SQLAlchemyError as e:
+            logger.error(f"Database error in set_user_overdue_snooze_date: {e}")
+            return False
+
     def get_all_users(self) -> List[User]:
         """获取所有用户"""
         try:
@@ -360,7 +394,7 @@ class Database:
             逾期任务列表，按 due_date 升序排列
         """
         if statuses is None:
-            statuses = [STATUS_PENDING]
+            statuses = [STATUS_PENDING, STATUS_MISSED]
 
         try:
             with self.get_session() as session:
@@ -393,7 +427,7 @@ class Database:
             逾期任务数量
         """
         if statuses is None:
-            statuses = [STATUS_PENDING]
+            statuses = [STATUS_PENDING, STATUS_MISSED]
 
         try:
             with self.get_session() as session:
@@ -406,6 +440,26 @@ class Database:
                 ).count()
         except SQLAlchemyError as e:
             logger.error(f"Database error in count_overdue_tasks: {e}")
+            return 0
+
+    def mark_overdue_tasks_as_missed(self, user_id: int, today: str) -> int:
+        """??????????? missed"""
+        try:
+            with self.get_session() as session:
+                count = session.query(Task).filter(
+                    and_(
+                        Task.user_id == user_id,
+                        Task.due_date < today,
+                        Task.status == STATUS_PENDING
+                    )
+                ).update(
+                    {Task.status: STATUS_MISSED, Task.updated_at: datetime.utcnow()},
+                    synchronize_session=False
+                )
+                session.commit()
+                return count or 0
+        except SQLAlchemyError as e:
+            logger.error(f"Database error in mark_overdue_tasks_as_missed: {e}")
             return 0
 
     def get_tasks_by_user_and_date_range(

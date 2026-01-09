@@ -1,15 +1,12 @@
-#!/usr/bin/env python3
+﻿#!/usr/bin/env python3
 """
-Telegram 计划提醒机器人 - 主程序入口
-严格按照 docs/planbot-checklist.v1.0.md 实现
+Telegram 璁″垝鎻愰啋鏈哄櫒浜?- 涓荤▼搴忓叆鍙?涓ユ牸鎸夌収 docs/planbot-checklist.v1.0.md 瀹炵幇
 
-功能：
-- 初始化数据库和Bot
-- 注册命令和回调处理器
-- 启动定时调度系统
-- 处理停机恢复与补发逻辑
-- 长轮询模式运行
-"""
+鍔熻兘锛?- 鍒濆鍖栨暟鎹簱鍜孊ot
+- 娉ㄥ唽鍛戒护鍜屽洖璋冨鐞嗗櫒
+- 鍚姩瀹氭椂璋冨害绯荤粺
+- 澶勭悊鍋滄満鎭㈠涓庤ˉ鍙戦€昏緫
+- 闀胯疆璇㈡ā寮忚繍琛?"""
 
 import asyncio
 import signal
@@ -37,13 +34,13 @@ from src.utils.logger import setup_logger, get_logger
 from src.constants import STATUS_PENDING, STATUS_MISSED
 
 
-# 全局变量
+# 鍏ㄥ眬鍙橀噺
 scheduler = None
 application = None
 
 
 def handle_shutdown(signum, frame):
-    """处理关闭信号"""
+    """澶勭悊鍏抽棴淇″彿"""
     logger = get_logger(__name__)
     logger.info(f"Received signal {signum}, shutting down...")
 
@@ -51,7 +48,7 @@ def handle_shutdown(signum, frame):
         scheduler.shutdown()
 
     if application:
-        # 停止轮询
+        # 鍋滄杞
         asyncio.create_task(application.stop())
 
     sys.exit(0)
@@ -59,14 +56,11 @@ def handle_shutdown(signum, frame):
 
 async def check_and_send_makeup_reviews(scheduler_obj: TaskScheduler, db):
     """
-    检查并发送补发的日终核对
-    用于停机恢复后补发昨日未清任务
-    严格按照文档第 6 和 8 章节
+    妫€鏌ュ苟鍙戦€佽ˉ鍙戠殑鏃ョ粓鏍稿
+    鐢ㄤ簬鍋滄満鎭㈠鍚庤ˉ鍙戞槰鏃ユ湭娓呬换鍔?    涓ユ牸鎸夌収鏂囨。绗?6 鍜?8 绔犺妭
 
     Args:
-        scheduler_obj: 调度器实例
-        db: 数据库实例
-    """
+        scheduler_obj: 璋冨害鍣ㄥ疄渚?        db: 鏁版嵁搴撳疄渚?    """
     logger = get_logger(__name__)
     logger.info("Checking for makeup reviews...")
 
@@ -74,11 +68,10 @@ async def check_and_send_makeup_reviews(scheduler_obj: TaskScheduler, db):
 
     for user in users:
         try:
-            # 获取用户时区的昨天日期
-            tz = pytz.timezone(user.tz)
+            # 鑾峰彇鐢ㄦ埛鏃跺尯鐨勬槰澶╂棩鏈?            tz = pytz.timezone(user.tz)
             yesterday = (datetime.now(tz) - timedelta(days=1)).strftime('%Y-%m-%d')
 
-            # 获取昨天到期的 pending/missed 任务
+            # 鑾峰彇鏄ㄥぉ鍒版湡鐨?pending/missed 浠诲姟
             tasks = db.get_tasks_by_user_and_date(
                 user.id,
                 yesterday,
@@ -86,7 +79,7 @@ async def check_and_send_makeup_reviews(scheduler_obj: TaskScheduler, db):
             )
 
             if tasks:
-                # 发送补发的日终核对
+                # 鍙戦€佽ˉ鍙戠殑鏃ョ粓鏍稿
                 await scheduler_obj.send_makeup_review(user.id)
                 logger.info(
                     f"Makeup review sent: user_id={user.id}, "
@@ -100,20 +93,20 @@ async def check_and_send_makeup_reviews(scheduler_obj: TaskScheduler, db):
 
 
 def main():
-    """主函数"""
+    """涓诲嚱鏁?""
     global scheduler, application
 
-    # 1. 加载配置
+    # 1. 鍔犺浇閰嶇疆
     try:
         config = get_config()
     except FileNotFoundError as e:
-        print(f"错误：{e}")
+        print(f"閿欒锛歿e}")
         sys.exit(1)
     except Exception as e:
-        print(f"配置加载失败：{e}")
+        print(f"閰嶇疆鍔犺浇澶辫触锛歿e}")
         sys.exit(1)
 
-    # 2. 设置日志
+    # 2. 璁剧疆鏃ュ織
     logger = setup_logger(
         name="planbot",
         level=config.log_level,
@@ -124,7 +117,7 @@ def main():
     logger.info("Telegram Plan Bot Starting...")
     logger.info("=" * 60)
 
-    # 3. 初始化数据库
+    # 3. 鍒濆鍖栨暟鎹簱
     try:
         db = get_database(config.db_path)
         db.init_db()
@@ -133,7 +126,7 @@ def main():
         logger.error(f"Database initialization failed: {e}")
         sys.exit(1)
 
-    # 4. 创建 Telegram Bot Application
+    # 4. 鍒涘缓 Telegram Bot Application
     try:
         application = Application.builder().token(config.bot_token).build()
         logger.info("Telegram Bot application created")
@@ -141,12 +134,10 @@ def main():
         logger.error(f"Failed to create bot application: {e}")
         sys.exit(1)
 
-    # 5. 创建处理器实例
-    bot_handlers = BotHandlers(db)
+    # 5. 鍒涘缓澶勭悊鍣ㄥ疄渚?    bot_handlers = BotHandlers(db)
     callback_handlers = CallbackHandlers(db)
 
-    # 6. 注册命令处理器
-    application.add_handler(CommandHandler("start", bot_handlers.cmd_start))
+    # 6. 娉ㄥ唽鍛戒护澶勭悊鍣?    application.add_handler(CommandHandler("start", bot_handlers.cmd_start))
     application.add_handler(CommandHandler("add", bot_handlers.cmd_add))
     application.add_handler(CommandHandler("today", bot_handlers.cmd_today))
     application.add_handler(CommandHandler("week", bot_handlers.cmd_week))
@@ -155,11 +146,10 @@ def main():
     application.add_handler(CommandHandler("timezone", bot_handlers.cmd_timezone))
     logger.info("Command handlers registered")
 
-    # 7. 注册回调查询处理器
-    application.add_handler(CallbackQueryHandler(callback_handlers.handle_callback_query))
+    # 7. 娉ㄥ唽鍥炶皟鏌ヨ澶勭悊鍣?    application.add_handler(CallbackQueryHandler(callback_handlers.handle_callback_query))
     logger.info("Callback query handler registered")
 
-    # 8. 注册文本消息处理器（一次性输入模式）
+    # 8. 娉ㄥ唽鏂囨湰娑堟伅澶勭悊鍣紙涓€娆℃€ц緭鍏ユā寮忥級
     application.add_handler(
         MessageHandler(
             filters.TEXT & ~filters.COMMAND,
@@ -168,38 +158,40 @@ def main():
     )
     logger.info("Text message handler registered")
 
-    # 9. 创建调度器
-    try:
-        scheduler = TaskScheduler(application.bot, db)
-        logger.info("Scheduler created")
-    except Exception as e:
-        logger.error(f"Failed to create scheduler: {e}")
-        sys.exit(1)
-
-    # 10. 注册调度器重建回调（供命令处理器使用）
-    def schedule_rebuild_callback(user):
-        """调度器重建回调函数"""
-        scheduler.rebuild_user_jobs(user)
-
-    application.bot_data['schedule_rebuild_callback'] = schedule_rebuild_callback
-
-    # 11. 启动调度器并重建所有 Job
-    try:
-        scheduler.start()
-        scheduler.rebuild_all_jobs()
-        logger.info("Scheduler started and jobs rebuilt")
-        logger.info("🔔 Scheduler ready")
-    except Exception as e:
-        logger.error(f"Failed to start scheduler: {e}")
-        sys.exit(1)
-
-    # 12. 检查并发送补发的日终核对（停机恢复逻辑）
+    # 启动任务（调度器初始化/补发/通知）
     async def startup_tasks(application):
         """启动时执行的任务"""
-        # 1. 检查并发送补发的日终核对
+        global scheduler
+
+        # 1. 初始化调度器（绑定运行中的事件循环）
+        try:
+            scheduler = TaskScheduler(application.bot, db)
+            logger.info("Scheduler created")
+        except Exception as e:
+            logger.error(f"Failed to create scheduler: {e}")
+            raise
+
+        # 2. 注册调度器重建回调（供命令处理器使用）
+        def schedule_rebuild_callback(user):
+            """调度器重建回调函数"""
+            scheduler.rebuild_user_jobs(user)
+
+        application.bot_data['schedule_rebuild_callback'] = schedule_rebuild_callback
+
+        # 3. 启动调度器并重建所有 Job
+        try:
+            scheduler.start()
+            scheduler.rebuild_all_jobs()
+            logger.info("Scheduler started and jobs rebuilt")
+            logger.info("Scheduler ready")
+        except Exception as e:
+            logger.error(f"Failed to start scheduler: {e}")
+            raise
+
+        # 4. 检查并发送补发的日终核对
         await check_and_send_makeup_reviews(scheduler, db)
 
-        # 2. 发送启动通知（如果已配置）
+        # 5. 发送启动通知（如果已配置）
         try:
             # 检查是否启用启动通知
             enabled = config.get('notifications.startup_alert.enabled', False)
@@ -233,31 +225,27 @@ def main():
         except Exception as e:
             logger.error(f"Failed to send startup notification: {e}")
 
-    # 将启动任务添加到事件循环
     application.post_init = startup_tasks
 
-    # 13. 注册信号处理器
-    signal.signal(signal.SIGINT, handle_shutdown)
+    # 13. 娉ㄥ唽淇″彿澶勭悊鍣?    signal.signal(signal.SIGINT, handle_shutdown)
     signal.signal(signal.SIGTERM, handle_shutdown)
 
-    # 14. 启动 Bot（长轮询模式）
-    try:
+    # 14. 鍚姩 Bot锛堥暱杞妯″紡锛?    try:
         logger.info("Starting bot with long polling...")
         logger.info("=" * 60)
         logger.info("Bot is running. Press Ctrl+C to stop.")
         logger.info("=" * 60)
 
-        # 使用 run_polling 启动长轮询
-        application.run_polling(
+        # 浣跨敤 run_polling 鍚姩闀胯疆璇?        application.run_polling(
             allowed_updates=Update.ALL_TYPES,
-            drop_pending_updates=False  # 不丢弃挂起的更新
+            drop_pending_updates=False  # 涓嶄涪寮冩寕璧风殑鏇存柊
         )
 
     except Exception as e:
         logger.error(f"Bot runtime error: {e}", exc_info=True)
         sys.exit(1)
     finally:
-        # 清理资源
+        # 娓呯悊璧勬簮
         if scheduler:
             scheduler.shutdown()
         logger.info("Bot stopped")

@@ -58,3 +58,13 @@ def create_new_plan_buttons() -> InlineKeyboardMarkup:
         ]
     ]
     return InlineKeyboardMarkup(keyboard)
+
+def create_overdue_snooze_buttons() -> InlineKeyboardMarkup:
+    """??????????????"""
+    keyboard = [
+        [
+            InlineKeyboardButton("?????????", callback_data="ovr:snooze"),
+        ]
+    ]
+    return InlineKeyboardMarkup(keyboard)
+

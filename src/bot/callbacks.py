@@ -11,9 +11,11 @@ Bot 回调查询处理器
 """
 
 import asyncio
+from datetime import datetime
 from concurrent.futures import ThreadPoolExecutor
 from functools import partial
 from typing import Optional, Callable, Any
+import pytz
 
 from telegram import Update
 from telegram.ext import ContextTypes
@@ -124,6 +126,9 @@ class CallbackHandlers:
         elif parts[0] == 'new':
             # 新计划征集
             await self._handle_new_plan_callback(query, parts, callback_id, context, perf)
+        elif parts[0] == 'ovr':
+            # ????
+            await self._handle_overdue_callback(query, parts, callback_id, perf)
         else:
             logger.warning(f"Unknown callback data: {callback_data}")
 
@@ -155,6 +160,11 @@ class CallbackHandlers:
             if not task:
                 await query.edit_message_text("任务不存在。")
                 perf.checkpoint("Telegram响应(任务不存在)")
+                return
+
+            if task.status in (STATUS_DONE, STATUS_CANCELED):
+                await query.edit_message_reply_markup(reply_markup=None)
+                perf.checkpoint("Telegram????(???)")
                 return
 
             # 根据动作执行操作
@@ -316,6 +326,46 @@ class CallbackHandlers:
         else:
             await query.edit_message_text("顺延失败，请稍后重试。")
             perf.checkpoint("Telegram响应(失败)")
+
+    async def _handle_overdue_callback(self, query, parts: list, callback_id: str, perf: PerformanceLogger):
+        """?????????"""
+        action = parts[1] if len(parts) > 1 else None
+        if action != 'snooze':
+            logger.warning(f"Unknown overdue action: {action}")
+            return
+
+        if not query.message:
+            return
+
+        chat_id = query.message.chat_id
+        user = await run_in_executor(self.db.get_user_by_chat_id, chat_id)
+        perf.checkpoint("DB????(async)")
+
+        if not user:
+            await query.edit_message_reply_markup(reply_markup=None)
+            return
+
+        tz = pytz.timezone(user.tz)
+        today = datetime.now(tz).strftime('%Y-%m-%d')
+
+        result = await run_in_executor(
+            self.db.mark_callback_processed,
+            callback_id, 0, 'overdue_snooze'
+        )
+        perf.checkpoint("DB????(async)")
+
+        if result == 'error':
+            logger.warning(f"DB error when marking overdue_snooze callback: chat_id={chat_id}")
+            return
+
+        await run_in_executor(
+            self.db.set_user_overdue_snooze_date,
+            user.id, today
+        )
+        perf.checkpoint("DB??snooze(async)")
+
+        await query.edit_message_reply_markup(reply_markup=None)
+        perf.checkpoint("Telegram????")
 
     async def _handle_new_plan_callback(
         self,
