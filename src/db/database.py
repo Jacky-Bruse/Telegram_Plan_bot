@@ -60,9 +60,10 @@ class Database:
         logger.info("Database tables created")
 
     def _ensure_schema(self):
-        """?????????????"""
+        """确保数据库 schema 包含所有必要字段"""
         try:
             with self.engine.connect() as conn:
+                # 检查 users 表
                 result = conn.exec_driver_sql("PRAGMA table_info(users)")
                 cols = [row[1] for row in result]
                 if not cols:
@@ -70,6 +71,28 @@ class Database:
                 if "overdue_snooze_date" not in cols:
                     conn.exec_driver_sql("ALTER TABLE users ADD COLUMN overdue_snooze_date VARCHAR(10)")
                     logger.info("Database schema updated: users.overdue_snooze_date")
+                if "awaiting_reminder_time" not in cols:
+                    conn.exec_driver_sql("ALTER TABLE users ADD COLUMN awaiting_reminder_time BOOLEAN DEFAULT 0")
+                    logger.info("Database schema updated: users.awaiting_reminder_time")
+                if "awaiting_reminder_task_id" not in cols:
+                    conn.exec_driver_sql("ALTER TABLE users ADD COLUMN awaiting_reminder_task_id INTEGER")
+                    logger.info("Database schema updated: users.awaiting_reminder_task_id")
+                if "awaiting_reminder_message_id" not in cols:
+                    conn.exec_driver_sql("ALTER TABLE users ADD COLUMN awaiting_reminder_message_id INTEGER")
+                    logger.info("Database schema updated: users.awaiting_reminder_message_id")
+
+                # 检查 tasks 表
+                result = conn.exec_driver_sql("PRAGMA table_info(tasks)")
+                task_cols = [row[1] for row in result]
+                if task_cols:
+                    if "reminder_at" not in task_cols:
+                        conn.exec_driver_sql("ALTER TABLE tasks ADD COLUMN reminder_at VARCHAR(16)")
+                        logger.info("Database schema updated: tasks.reminder_at")
+                    if "reminder_status" not in task_cols:
+                        conn.exec_driver_sql("ALTER TABLE tasks ADD COLUMN reminder_status VARCHAR(16)")
+                        logger.info("Database schema updated: tasks.reminder_status")
+
+                conn.commit()
         except SQLAlchemyError as e:
             logger.error(f"Database error in _ensure_schema: {e}")
 
@@ -243,6 +266,11 @@ class Database:
                 user = session.query(User).filter(User.id == user_id).first()
                 if user:
                     user.awaiting_plans = awaiting
+                    # 互斥：进入计划输入状态时清除 awaiting_reminder_time
+                    if awaiting:
+                        user.awaiting_reminder_time = False
+                        user.awaiting_reminder_task_id = None
+                        user.awaiting_reminder_message_id = None
                     session.commit()
                     return True
                 return False
@@ -269,10 +297,10 @@ class Database:
             return False
 
     def set_user_overdue_snooze_date(self, user_id: int, date_str: Optional[str]) -> bool:
-        """??????????????
+        """设置用户的逾期提醒暂停日期
 
         Returns:
-            ????
+            是否成功
         """
         try:
             with self.get_session() as session:
@@ -284,6 +312,67 @@ class Database:
                 return False
         except SQLAlchemyError as e:
             logger.error(f"Database error in set_user_overdue_snooze_date: {e}")
+            return False
+
+    def set_user_awaiting_reminder_time(
+        self,
+        user_id: int,
+        awaiting: bool,
+        task_id: Optional[int] = None,
+        message_id: Optional[int] = None
+    ) -> bool:
+        """
+        设置用户是否在等待输入提醒时间
+
+        Args:
+            user_id: 用户 ID
+            awaiting: 是否等待
+            task_id: 等待修改的任务 ID（awaiting=True 时必填）
+            message_id: 原始提醒消息 ID（用于编辑原消息）
+
+        Returns:
+            是否成功
+        """
+        try:
+            with self.get_session() as session:
+                user = session.query(User).filter(User.id == user_id).first()
+                if user:
+                    user.awaiting_reminder_time = awaiting
+                    user.awaiting_reminder_task_id = task_id if awaiting else None
+                    user.awaiting_reminder_message_id = message_id if awaiting else None
+                    # 互斥：进入提醒时间等待状态时清除 awaiting_plans
+                    if awaiting:
+                        user.awaiting_plans = False
+                    session.commit()
+                    logger.info(
+                        f"User awaiting_reminder_time updated: user_id={user_id}, "
+                        f"awaiting={awaiting}, task_id={task_id}, message_id={message_id}"
+                    )
+                    return True
+                return False
+        except SQLAlchemyError as e:
+            logger.error(f"Database error in set_user_awaiting_reminder_time: {e}")
+            return False
+
+    def clear_user_reminder_waiting(self, user_id: int) -> bool:
+        """
+        清除用户的提醒等待状态
+
+        Returns:
+            是否成功
+        """
+        try:
+            with self.get_session() as session:
+                user = session.query(User).filter(User.id == user_id).first()
+                if user:
+                    user.awaiting_reminder_time = False
+                    user.awaiting_reminder_task_id = None
+                    user.awaiting_reminder_message_id = None
+                    session.commit()
+                    return True
+                return False
+        except SQLAlchemyError as e:
+            logger.error(f"Database error in clear_user_reminder_waiting: {e}")
             return False
 
     def get_all_users(self) -> List[User]:
@@ -301,7 +390,8 @@ class Database:
         self,
         user_id: int,
         content: str,
-        due_date: str
+        due_date: str,
+        reminder_at: Optional[str] = None
     ) -> Optional[Task]:
         """
         创建任务
@@ -310,6 +400,7 @@ class Database:
             user_id: 用户 ID
             content: 任务内容
             due_date: 到期日期（YYYY-MM-DD）
+            reminder_at: 提醒时间（YYYY-MM-DD HH:MM，可选）
 
         Returns:
             创建的 Task 对象，失败返回 None
@@ -321,12 +412,14 @@ class Database:
                         user_id=user_id,
                         content=content,
                         due_date=due_date,
-                        status=STATUS_PENDING
+                        status=STATUS_PENDING,
+                        reminder_at=reminder_at,
+                        reminder_status="pending" if reminder_at else None
                     )
                     session.add(task)
                     session.commit()
                     session.refresh(task)
-                    logger.info(f"Task created: task_id={task.id}, user_id={user_id}")
+                    logger.info(f"Task created: task_id={task.id}, user_id={user_id}, reminder_at={reminder_at}")
                     return task
         except SQLAlchemyError as e:
             logger.error(f"Database error in create_task: {e}")
@@ -761,6 +854,113 @@ class Database:
         except SQLAlchemyError as e:
             logger.error(f"Database error in postpone_task_with_callback: {e}")
             return "error"
+
+    # ==================== 提醒相关方法 ====================
+
+    def update_task_reminder(
+        self,
+        task_id: int,
+        reminder_at: str,
+        due_date: str
+    ) -> bool:
+        """
+        更新任务提醒时间和到期日期
+
+        Args:
+            task_id: 任务 ID
+            reminder_at: 新提醒时间（YYYY-MM-DD HH:MM）
+            due_date: 新到期日期（YYYY-MM-DD）
+
+        Returns:
+            是否成功
+        """
+        try:
+            with self.get_session() as session:
+                task = session.query(Task).filter(Task.id == task_id).first()
+                if task:
+                    task.reminder_at = reminder_at
+                    task.due_date = due_date
+                    task.reminder_status = "pending"
+                    session.commit()
+                    logger.info(
+                        f"Task reminder updated: task_id={task_id}, "
+                        f"reminder_at={reminder_at}, due_date={due_date}"
+                    )
+                    return True
+                return False
+        except SQLAlchemyError as e:
+            logger.error(f"Database error in update_task_reminder: {e}")
+            return False
+
+    def update_reminder_status(
+        self,
+        task_id: int,
+        status: str
+    ) -> bool:
+        """
+        更新任务提醒状态
+
+        Args:
+            task_id: 任务 ID
+            status: 新状态（pending/sent/canceled）
+
+        Returns:
+            是否成功
+        """
+        try:
+            with self.get_session() as session:
+                task = session.query(Task).filter(Task.id == task_id).first()
+                if task:
+                    task.reminder_status = status
+                    session.commit()
+                    logger.info(f"Reminder status updated: task_id={task_id}, status={status}")
+                    return True
+                return False
+        except SQLAlchemyError as e:
+            logger.error(f"Database error in update_reminder_status: {e}")
+            return False
+
+    def get_pending_reminders_for_user(self, user_id: int) -> List[Task]:
+        """
+        获取用户所有待发送的提醒（reminder_status=pending）
+
+        Args:
+            user_id: 用户 ID
+
+        Returns:
+            任务列表
+        """
+        try:
+            with self.get_session() as session:
+                return session.query(Task).filter(
+                    and_(
+                        Task.user_id == user_id,
+                        Task.reminder_status == "pending",
+                        Task.reminder_at.isnot(None)
+                    )
+                ).all()
+        except SQLAlchemyError as e:
+            logger.error(f"Database error in get_pending_reminders_for_user: {e}")
+            return []
+
+    def get_all_pending_reminders(self) -> List[Task]:
+        """
+        获取所有待发送的提醒（用于启动时重建 Job）
+
+        Returns:
+            任务列表
+        """
+        try:
+            with self.get_session() as session:
+                return session.query(Task).filter(
+                    and_(
+                        Task.reminder_status == "pending",
+                        Task.reminder_at.isnot(None)
+                    )
+                ).all()
+        except SQLAlchemyError as e:
+            logger.error(f"Database error in get_all_pending_reminders: {e}")
+            return []
 
 
 # 全局数据库实例

@@ -59,12 +59,36 @@ def create_new_plan_buttons() -> InlineKeyboardMarkup:
     ]
     return InlineKeyboardMarkup(keyboard)
 
+
 def create_overdue_snooze_buttons() -> InlineKeyboardMarkup:
-    """??????????????"""
+    """创建逾期任务暂停按钮"""
     keyboard = [
         [
-            InlineKeyboardButton("?????????", callback_data="ovr:snooze"),
+            InlineKeyboardButton("今日不再提醒", callback_data="ovr:snooze"),
         ]
     ]
     return InlineKeyboardMarkup(keyboard)
 
+
+# ==================== 提醒相关按钮 ====================
+
+def create_reminder_buttons(task_id: int) -> InlineKeyboardMarkup:
+    """创建提醒消息按钮（三键：完成、取消、修改时间）"""
+    keyboard = [
+        [
+            InlineKeyboardButton("✅ 完成", callback_data=f"t:{task_id}:done"),
+            InlineKeyboardButton("🗑 取消", callback_data=f"t:{task_id}:cancel"),
+            InlineKeyboardButton("🕒 修改时间", callback_data=f"t:{task_id}:edit_time"),
+        ]
+    ]
+    return InlineKeyboardMarkup(keyboard)
+
+
+def create_cancel_edit_button(task_id: int) -> InlineKeyboardMarkup:
+    """创建取消修改按钮"""
+    keyboard = [
+        [
+            InlineKeyboardButton("❌ 取消修改", callback_data=f"t:{task_id}:cancel_edit"),
+        ]
+    ]
+    return InlineKeyboardMarkup(keyboard)

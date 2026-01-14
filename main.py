@@ -186,17 +186,24 @@ def main():
         application.bot_data['schedule_rebuild_callback'] = schedule_rebuild_callback
 
         try:
-            # 3. ?????????? Job
+            # 3. 启动调度器并重建 Job
             scheduler.start()
-            scheduler.rebuild_all_jobs()
+            catchup_task_ids = scheduler.rebuild_all_jobs()
             logger.info("Scheduler started and jobs rebuilt")
             logger.info("Scheduler ready")
         except Exception as e:
             logger.error(f"Failed to start scheduler: {e}")
             raise
 
-        # 4. ????????????
+        # 4. 补发昨日未清任务
         await check_and_send_makeup_reviews(scheduler, db)
+
+        # 5. 补发24小时内的过期提醒
+        if catchup_task_ids:
+            try:
+                await scheduler.send_catchup_reminders(catchup_task_ids)
+            except Exception as e:
+                logger.error(f"Failed to send catch-up reminders: {e}")
 
         try:
             # ??????????

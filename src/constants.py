@@ -8,6 +8,11 @@ STATUS_DONE = "done"
 STATUS_CANCELED = "canceled"
 STATUS_MISSED = "missed"
 
+# 提醒状态
+REMINDER_STATUS_PENDING = "pending"
+REMINDER_STATUS_SENT = "sent"
+REMINDER_STATUS_CANCELED = "canceled"
+
 # 回调数据前缀
 CALLBACK_TASK_PREFIX = "t"
 CALLBACK_NEW_PLAN = "new"
@@ -19,6 +24,8 @@ ACTION_CANCEL = "cancel"
 ACTION_POSTPONE = "p"
 ACTION_ADD = "add"
 ACTION_SKIP = "skip"
+ACTION_EDIT_TIME = "edit_time"
+ACTION_CANCEL_EDIT = "cancel_edit"
 
 # 限制
 MAX_TASKS_PER_MESSAGE = 10  # 每条消息最多显示的任务数
@@ -50,4 +57,23 @@ WEEKDAY_KEYWORDS = {
     "周六": 5, "星期六": 5, "礼拜六": 5,
     "周日": 6, "星期日": 6, "礼拜日": 6,
     "周天": 6, "星期天": 6, "礼拜天": 6,
+}
+
+# 时段词映射（小时范围）
+# 凌晨: 0-5, 早上/上午: 6-11, 中午: 12, 下午: 13-17, 晚上: 18-23
+TIME_PERIOD_KEYWORDS = {
+    "凌晨": (0, 5),
+    "早上": (6, 11),
+    "上午": (6, 11),
+    "中午": (12, 12),
+    "下午": (13, 17),
+    "晚上": (18, 23),
+}
+
+# 中文数字映射
+CHINESE_NUMBERS = {
+    "零": 0, "〇": 0,
+    "一": 1, "二": 2, "两": 2, "三": 3, "四": 4, "五": 5,
+    "六": 6, "七": 7, "八": 8, "九": 9, "十": 10,
+    "十一": 11, "十二": 12,
 }

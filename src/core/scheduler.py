@@ -1,20 +1,21 @@
 """
 定时调度系统
-使用 APScheduler 为每个用户管理晚间例行和早间清单任务
+使用 APScheduler 为每个用户管理晚间例行、早间清单和定时提醒任务
 严格按照文档第 6 章的 Job 规则
 """
 
 import asyncio
 from datetime import datetime, timedelta
-from typing import Optional
+from typing import Optional, List
 import pytz
 
 from apscheduler.schedulers.asyncio import AsyncIOScheduler
 from apscheduler.triggers.cron import CronTrigger
+from apscheduler.triggers.date import DateTrigger
 from telegram import Bot
 
 from src.db.database import Database
-from src.db.models import User
+from src.db.models import User, Task
 from src.bot.messages import (
     get_daily_review_header,
     format_task_item,
@@ -24,10 +25,18 @@ from src.bot.messages import (
     get_overdue_warning,
     get_overdue_snooze_hint,
     format_overdue_task_item,
+    get_reminder_message,
 )
-from src.bot.keyboards import create_new_plan_buttons, create_overdue_snooze_buttons
+from src.bot.keyboards import (
+    create_new_plan_buttons,
+    create_overdue_snooze_buttons,
+    create_reminder_buttons,
+)
 from src.bot.task_sender import send_tasks_with_buttons
-from src.constants import STATUS_PENDING, STATUS_MISSED
+from src.constants import (
+    STATUS_PENDING, STATUS_MISSED, STATUS_DONE, STATUS_CANCELED,
+    REMINDER_STATUS_SENT, REMINDER_STATUS_CANCELED,
+)
 from src.utils.logger import get_logger
 
 logger = get_logger(__name__)
@@ -62,15 +71,15 @@ class TaskScheduler:
 
     def rebuild_user_jobs(self, user: User):
         """
-        重建用户的所有 Job
+        重建用户的所有 Job（包括提醒 Job）
         用于初始化或配置更新后立即生效
         严格按照文档第 6 章
 
         Args:
             user: 用户对象
         """
-        # 移除旧 Job
-        self._remove_user_jobs(user.id)
+        # 移除旧的定时 Job（不移除提醒 Job，提醒 Job 单独管理）
+        self._remove_user_scheduled_jobs(user.id)
 
         # 创建晚间例行 Job
         self._schedule_evening_job(user)
@@ -81,27 +90,37 @@ class TaskScheduler:
 
         self._schedule_midnight_job(user)
 
+        # 重建用户的提醒 Job（用于时区变更）
+        self._rebuild_user_reminder_jobs(user)
+
         logger.info(
             f"Jobs rebuilt for user {user.chat_id}: "
             f"evening={user.evening_hour:02d}:{user.evening_min:02d}, "
             f"morning={user.morning_hour if user.morning_hour else 'off'}"
         )
 
-    def rebuild_all_jobs(self):
+    def rebuild_all_jobs(self) -> List[int]:
         """
         重建所有用户的 Job
         进程启动时调用
         严格按照文档第 6 章
+
+        Returns:
+            需要补发的任务 ID 列表（24小时内的过期提醒）
         """
         users = self.db.get_all_users()
 
         for user in users:
             self.rebuild_user_jobs(user)
 
-        logger.info(f"All jobs rebuilt for {len(users)} users")
+        # 重建所有提醒 Job，返回需要补发的任务
+        catchup_task_ids = self._rebuild_all_reminder_jobs()
 
-    def _remove_user_jobs(self, user_id: int):
-        """移除用户的所有 Job"""
+        logger.info(f"All jobs rebuilt for {len(users)} users")
+        return catchup_task_ids
+
+    def _remove_user_scheduled_jobs(self, user_id: int):
+        """移除用户的定时 Job（不包括提醒 Job）"""
         evening_job_id = f"evening_{user_id}"
         morning_job_id = f"morning_{user_id}"
         midnight_job_id = f"midnight_{user_id}"
@@ -114,6 +133,216 @@ class TaskScheduler:
 
         if self.scheduler.get_job(midnight_job_id):
             self.scheduler.remove_job(midnight_job_id)
+
+    def _rebuild_user_reminder_jobs(self, user: User):
+        """
+        重建用户的所有提醒 Job
+        用于时区变更后重建
+
+        Args:
+            user: 用户对象
+        """
+        # 获取用户所有待发送的提醒
+        pending_reminders = self.db.get_pending_reminders_for_user(user.id)
+        tz = pytz.timezone(user.tz)
+        now = datetime.now(tz)
+
+        for task in pending_reminders:
+            if not task.reminder_at:
+                continue
+
+            # 解析提醒时间
+            try:
+                reminder_dt = datetime.strptime(task.reminder_at, "%Y-%m-%d %H:%M")
+                reminder_dt = tz.localize(reminder_dt)
+
+                # 只重建未来的提醒
+                if reminder_dt > now:
+                    self.schedule_reminder_job(task, user.tz)
+            except ValueError as e:
+                logger.error(f"Invalid reminder_at format: {task.reminder_at}, error: {e}")
+
+    def _rebuild_all_reminder_jobs(self) -> List[int]:
+        """
+        重建所有待发送的提醒 Job（启动时调用）
+
+        处理逻辑：
+        - reminder_at > now：正常调度 DateTrigger
+        - now - reminder_at <= 24h：返回任务ID，由调用方统一补发
+        - now - reminder_at > 24h：标记为 canceled 并记录日志
+
+        Returns:
+            需要补发的任务 ID 列表
+        """
+        pending_reminders = self.db.get_all_pending_reminders()
+        rebuilt_count = 0
+        catchup_task_ids = []
+        expired_count = 0
+
+        for task in pending_reminders:
+            if not task.reminder_at:
+                continue
+
+            # 获取任务对应的用户
+            user = self.db.get_user_by_id(task.user_id)
+            if not user:
+                continue
+
+            tz = pytz.timezone(user.tz)
+            now = datetime.now(tz)
+
+            # 解析提醒时间
+            try:
+                reminder_dt = datetime.strptime(task.reminder_at, "%Y-%m-%d %H:%M")
+                reminder_dt = tz.localize(reminder_dt)
+
+                if reminder_dt > now:
+                    # 未来的提醒：正常调度
+                    self.schedule_reminder_job(task, user.tz)
+                    rebuilt_count += 1
+                elif (now - reminder_dt) <= timedelta(hours=24):
+                    # 24小时内的过期提醒：收集任务ID，稍后统一补发
+                    catchup_task_ids.append(task.id)
+                    logger.info(
+                        f"Pending catch-up reminder: task_id={task.id}, "
+                        f"original_time={task.reminder_at}, overdue_by={(now - reminder_dt)}"
+                    )
+                else:
+                    # 超过24小时的过期提醒：标记为 canceled
+                    self.db.update_reminder_status(task.id, REMINDER_STATUS_CANCELED)
+                    expired_count += 1
+                    logger.info(
+                        f"Expired reminder canceled: task_id={task.id}, "
+                        f"original_time={task.reminder_at}, overdue_by={(now - reminder_dt)}"
+                    )
+            except ValueError as e:
+                logger.error(f"Invalid reminder_at format: {task.reminder_at}, error: {e}")
+
+        logger.info(
+            f"Reminder jobs rebuilt: scheduled={rebuilt_count}, "
+            f"pending_catchup={len(catchup_task_ids)}, expired={expired_count}"
+        )
+        return catchup_task_ids
+
+    async def send_catchup_reminders(self, task_ids: List[int]):
+        """
+        发送补发的提醒消息（启动完成后调用）
+
+        Args:
+            task_ids: 需要补发的任务 ID 列表
+        """
+        if not task_ids:
+            return
+
+        logger.info(f"Sending {len(task_ids)} catch-up reminders")
+        sent_count = 0
+
+        for task_id in task_ids:
+            try:
+                await self._send_reminder(task_id)
+                sent_count += 1
+            except Exception as e:
+                logger.error(f"Failed to send catch-up reminder: task_id={task_id}, error: {e}")
+
+        logger.info(f"Catch-up reminders sent: {sent_count}/{len(task_ids)}")
+
+    # ==================== 提醒 Job 管理 ====================
+
+    def schedule_reminder_job(self, task: Task, timezone: str):
+        """
+        创建提醒 Job
+
+        Args:
+            task: 任务对象
+            timezone: 用户时区
+        """
+        if not task.reminder_at:
+            return
+
+        job_id = f"remind_{task.id}"
+        tz = pytz.timezone(timezone)
+
+        try:
+            # 解析提醒时间
+            reminder_dt = datetime.strptime(task.reminder_at, "%Y-%m-%d %H:%M")
+            reminder_dt = tz.localize(reminder_dt)
+
+            # 使用 DateTrigger 创建一次性 Job
+            trigger = DateTrigger(run_date=reminder_dt)
+
+            self.scheduler.add_job(
+                self._send_reminder,
+                trigger=trigger,
+                id=job_id,
+                args=[task.id],
+                replace_existing=True
+            )
+
+            logger.info(f"Reminder job scheduled: task_id={task.id}, reminder_at={task.reminder_at}")
+        except ValueError as e:
+            logger.error(f"Failed to schedule reminder: task_id={task.id}, error: {e}")
+
+    def remove_reminder_job(self, task_id: int):
+        """
+        移除提醒 Job
+
+        Args:
+            task_id: 任务 ID
+        """
+        job_id = f"remind_{task_id}"
+
+        if self.scheduler.get_job(job_id):
+            self.scheduler.remove_job(job_id)
+            logger.info(f"Reminder job removed: task_id={task_id}")
+
+    async def _send_reminder(self, task_id: int):
+        """
+        发送提醒消息
+
+        Args:
+            task_id: 任务 ID
+        """
+        logger.info(f"Reminder triggered for task_id={task_id}")
+
+        # 获取任务
+        task = self.db.get_task_by_id(task_id)
+        if not task:
+            logger.warning(f"Task not found: task_id={task_id}")
+            return
+
+        # 前置校验：任务是否已完成或取消
+        if task.status in (STATUS_DONE, STATUS_CANCELED):
+            # 不发送提醒，标记为已取消
+            self.db.update_reminder_status(task_id, REMINDER_STATUS_CANCELED)
+            logger.info(f"Reminder skipped (task already {task.status}): task_id={task_id}")
+            return
+
+        # 获取用户
+        user = self.db.get_user_by_id(task.user_id)
+        if not user:
+            logger.warning(f"User not found: user_id={task.user_id}")
+            return
+
+        chat_id = user.chat_id
+
+        # 发送提醒消息
+        message = get_reminder_message(task.content, task.reminder_at, user.tz)
+        buttons = create_reminder_buttons(task.id)
+
+        try:
+            await self.bot.send_message(
+                chat_id=chat_id,
+                text=message,
+                reply_markup=buttons
+            )
+
+            # 更新提醒状态为已发送
+            self.db.update_reminder_status(task_id, REMINDER_STATUS_SENT)
+            logger.info(f"Reminder sent: task_id={task_id}, chat_id={chat_id}")
+        except Exception as e:
+            logger.error(f"Failed to send reminder: task_id={task_id}, error: {e}")
+
+    # ==================== 定时任务 ====================
 
     def _schedule_evening_job(self, user: User):
         """
@@ -162,7 +391,7 @@ class TaskScheduler:
         )
 
     def _schedule_midnight_job(self, user: User):
-        """?????????? Job????? 00:00?"""
+        """创建午夜滚动 Job，每天 00:00 触发"""
         job_id = f"midnight_{user.id}"
         tz = pytz.timezone(user.tz)
 
@@ -181,7 +410,7 @@ class TaskScheduler:
         )
 
     async def _midnight_rollover(self, user_id: int):
-        """??????????????? missed"""
+        """午夜滚动：将过期的 pending 任务标记为 missed"""
         logger.info(f"Midnight rollover triggered for user_id={user_id}")
 
         user = self.db.get_user_by_id(user_id)

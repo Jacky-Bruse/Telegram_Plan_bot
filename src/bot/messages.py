@@ -5,7 +5,7 @@ Bot 消息文案模板
 
 import re
 from datetime import datetime, timedelta
-from typing import List
+from typing import List, Optional
 import pytz
 
 from src.db.models import Task
@@ -15,6 +15,7 @@ from src.constants import (
     DATE_KEYWORD_DAY_AFTER_TOMORROW,
     WEEKDAY_KEYWORDS
 )
+from src.core.date_parser import DateParser
 
 
 def get_start_message(tz: str, evening_time: str, morning_time: str) -> str:
@@ -141,20 +142,30 @@ def get_daily_review_header(is_makeup: bool = False) -> str:
     return "🧾 日终核对（今天应完成）："
 
 
-def format_task_item(task: Task, index: int = None) -> str:
+def format_task_item(task: Task, index: int = None, timezone: str = "Asia/Shanghai") -> str:
     """
     格式化单个任务条目
 
     Args:
         task: 任务对象
         index: 显示序号（如果为None则使用task.id，用于向后兼容）
+        timezone: 时区名称
 
     Returns:
-        格式化后的文本，如 "• #1 备份 NAS 配置"
+        格式化后的文本，如 "• #1 备份 NAS 配置" 或 "• #1 备份 NAS 配置（20:00）"
     """
-    # 去掉任务内容开头的日期关键词
-    clean_content = _strip_date_keywords(task.content)
+    # 使用 DateParser 去掉任务内容开头的日期时间关键词
+    parser = DateParser(timezone)
+    clean_content = parser.strip_datetime_prefix(task.content)
     display_id = index if index is not None else task.id
+
+    # 如果有提醒时间，显示时间
+    if task.reminder_at:
+        # reminder_at 格式为 "YYYY-MM-DD HH:MM"，取时间部分
+        time_part = task.reminder_at.split(" ")[1] if " " in task.reminder_at else ""
+        if time_part:
+            return f"• #{display_id} {clean_content}（{time_part}）"
+
     return f"• #{display_id} {clean_content}"
 
 
@@ -180,26 +191,48 @@ def get_input_mode_instructions() -> str:
 • 支持：今天/明天/后天/周X/下周X/日期/+Nd"""
 
 
-def format_task_creation_receipt(tasks: List[tuple], timezone: str = "Asia/Shanghai") -> str:
+def format_task_creation_receipt(
+    tasks: List[tuple],
+    timezone: str = "Asia/Shanghai",
+    skipped_count: int = 0
+) -> str:
     """
     格式化任务创建回执
 
     Args:
-        tasks: [(任务内容, 到期日期), ...]
+        tasks: [(任务内容, 到期日期, 提醒时间或None), ...] 或旧格式 [(任务内容, 到期日期), ...]
         timezone: 时区名称，用于计算相对时间标签
+        skipped_count: 因时间已过跳过的任务数
 
     Returns:
         回执文本
     """
     lines = [f"✅ 已创建 {len(tasks)} 项："]
+    parser = DateParser(timezone)
 
-    for content, due_date in tasks:
-        # 去掉任务内容中的日期关键词
-        clean_content = _strip_date_keywords(content)
-        # 获取相对时间标签
-        relative_label = get_relative_date_label(due_date, timezone)
-        # 格式：• 任务内容 → 日期 (相对时间)
-        lines.append(f"• {clean_content} → {due_date}{relative_label}")
+    for item in tasks:
+        # 兼容新旧格式
+        if len(item) == 3:
+            content, due_date, reminder_at = item
+        else:
+            content, due_date = item
+            reminder_at = None
+
+        # 去掉任务内容中的日期时间关键词
+        clean_content = parser.strip_datetime_prefix(content)
+
+        # 如果有提醒时间，显示完整的日期时间
+        if reminder_at:
+            lines.append(f"• {clean_content} → {reminder_at}")
+        else:
+            # 获取相对时间标签
+            relative_label = get_relative_date_label(due_date, timezone)
+            # 格式：• 任务内容 → 日期 (相对时间)
+            lines.append(f"• {clean_content} → {due_date}{relative_label}")
+
+    # 添加跳过提示
+    if skipped_count > 0:
+        lines.append(f"\n⚠️ 其中 {skipped_count} 条因时间已过未创建")
 
     return "\n".join(lines)
 
@@ -228,8 +261,8 @@ def get_overdue_warning(count: int) -> str:
 
 
 def get_overdue_snooze_hint() -> str:
-    """???????????????"""
-    return "???????????????????"
+    """获取逾期任务暂停提示（今日不再提醒）"""
+    return "点击下方按钮可暂停今日的逾期提醒"
 
 
 def format_overdue_task_item(task: Task, index: int = None) -> str:
@@ -414,4 +447,58 @@ def get_startup_notification(startup_time: str, timezone: str, user_count: int) 
 
 📅 时间：{startup_time} ({timezone})
 👥 用户数：{user_count}"""
+
+
+# ==================== 提醒相关消息 ====================
+
+def get_reminder_message(task_content: str, reminder_at: str, timezone: str = "Asia/Shanghai") -> str:
+    """
+    获取提醒消息
+
+    Args:
+        task_content: 任务内容（原文）
+        reminder_at: 提醒时间（YYYY-MM-DD HH:MM）
+        timezone: 时区名称
+
+    Returns:
+        提醒消息文本
+    """
+    parser = DateParser(timezone)
+    clean_content = parser.strip_datetime_prefix(task_content)
+    return f"⏰ 提醒：{clean_content}\n时间：{reminder_at}"
+
+
+def get_time_passed_create_message() -> str:
+    """时间已过（创建时）提示"""
+    return "时间已过，未创建该任务"
+
+
+def get_time_passed_edit_message() -> str:
+    """时间已过（修改时）提示"""
+    return "时间已过，请重新输入"
+
+
+def get_edit_time_prompt() -> str:
+    """修改时间输入提示"""
+    return """请输入新的提醒时间
+支持格式：今晚8点 / 今天20:00 / 周五20:00 / 周五晚上八点 / 20:00"""
+
+
+def get_reminder_updated_message(new_reminder_at: str) -> str:
+    """
+    提醒时间更新确认
+
+    Args:
+        new_reminder_at: 新提醒时间（YYYY-MM-DD HH:MM）
+
+    Returns:
+        确认消息
+    """
+    return f"✅ 提醒时间已更新为：{new_reminder_at}"
+
+
+def get_edit_canceled_message() -> str:
+    """取消修改确认"""
+    return "已取消修改"
+
 

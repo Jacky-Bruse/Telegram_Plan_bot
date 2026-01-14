@@ -49,8 +49,17 @@ class User(Base):
     # 是否已跳过当晚新计划征集（每天重置）
     skipped_tonight = Column(Boolean, nullable=False, default=False)
 
-    # 过期提醒“今日不再提醒”日期（YYYY-MM-DD）
+    # 过期提醒"今日不再提醒"日期（YYYY-MM-DD）
     overdue_snooze_date = Column(String(10), nullable=True)
+
+    # 是否等待输入新提醒时间
+    awaiting_reminder_time = Column(Boolean, nullable=False, default=False)
+
+    # 等待修改的任务 ID
+    awaiting_reminder_task_id = Column(Integer, nullable=True)
+
+    # 等待修改时的原始提醒消息 ID（用于编辑原消息）
+    awaiting_reminder_message_id = Column(Integer, nullable=True)
 
     # 创建时间
     created_at = Column(DateTime, nullable=False, default=datetime.utcnow)
@@ -104,6 +113,12 @@ class Task(Base):
 
     # 取消时间（可空）
     canceled_at = Column(DateTime, nullable=True)
+
+    # 提醒时间（YYYY-MM-DD HH:MM，用户本地时间，可空）
+    reminder_at = Column(String(16), nullable=True)
+
+    # 提醒状态（pending/sent/canceled，可空）
+    reminder_status = Column(String(16), nullable=True)
 
     # 关联用户
     user = relationship('User', back_populates='tasks')

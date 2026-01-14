@@ -33,9 +33,13 @@ from src.bot.messages import (
     get_invalid_time_format_message,
     get_input_truncated_message,
     get_text_truncated_warning,
+    get_time_passed_create_message,
+    get_time_passed_edit_message,
+    get_reminder_message,
+    get_reminder_updated_message,
 )
 from src.bot.task_sender import send_tasks_with_buttons
-from src.bot.keyboards import create_task_buttons
+from src.bot.keyboards import create_task_buttons, create_reminder_buttons
 from src.constants import (
     STATUS_PENDING, STATUS_MISSED,
     MAX_INPUT_LINES, MAX_CONTENT_LENGTH,
@@ -453,7 +457,7 @@ class BotHandlers:
     async def handle_text_message(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
         """
         文本消息处理器
-        处理一次性输入模式的多行任务
+        处理一次性输入模式的多行任务和修改时间输入
         严格按照文档 2.3 章节和 8 章节（异常处理）
         """
         chat_id = update.effective_chat.id
@@ -462,7 +466,17 @@ class BotHandlers:
         user = self.db.get_user_by_chat_id(chat_id)
         perf.checkpoint("DB查询用户")
 
-        if user is None or not user.awaiting_plans:
+        if user is None:
+            return
+
+        # 优先处理修改时间输入
+        if user.awaiting_reminder_time and user.awaiting_reminder_task_id:
+            await self._handle_reminder_time_input(update, context, user)
+            perf.finish()
+            return
+
+        # 处理任务输入
+        if not user.awaiting_plans:
             # 不在输入模式，忽略
             return
 
@@ -479,6 +493,7 @@ class BotHandlers:
         parser = DateParser(user.tz)
         created_tasks = []
         warnings = []
+        skipped_count = 0
 
         for i, line in enumerate(lines, start=1):
             line = line.strip()
@@ -490,14 +505,27 @@ class BotHandlers:
                 line = line[:MAX_CONTENT_LENGTH]
                 warnings.append(get_text_truncated_warning(i))
 
-            # 解析日期
-            due_date, content = parser.parse_date(line)
+            # 解析日期时间
+            due_date, time_str, content, is_passed = parser.parse_date_time(line)
+
+            # 如果时间已过，跳过
+            if is_passed:
+                skipped_count += 1
+                logger.info(f"Skipped task (time passed): {content}")
+                continue
+
+            # 组合提醒时间
+            reminder_at = f"{due_date} {time_str}" if time_str else None
 
             # 创建任务
-            task = self.db.create_task(user.id, content, due_date)
+            task = self.db.create_task(user.id, content, due_date, reminder_at)
 
             if task:
-                created_tasks.append((content, due_date))
+                created_tasks.append((content, due_date, reminder_at))
+
+                # 如果有提醒时间，创建提醒 Job
+                if reminder_at and 'scheduler' in context.bot_data:
+                    context.bot_data['scheduler'].schedule_reminder_job(task, user.tz)
             else:
                 logger.error(f"Failed to create task for user {chat_id}: {content}")
 
@@ -509,7 +537,11 @@ class BotHandlers:
 
         # 发送回执
         if created_tasks:
-            receipt = format_task_creation_receipt(created_tasks, timezone=user.tz)
+            receipt = format_task_creation_receipt(
+                created_tasks,
+                timezone=user.tz,
+                skipped_count=skipped_count
+            )
 
             if truncated:
                 receipt += f"\n{get_input_truncated_message(MAX_INPUT_LINES)}"
@@ -519,9 +551,97 @@ class BotHandlers:
 
             await update.message.reply_text(receipt)
             perf.checkpoint("Telegram发送回执")
-            logger.info(f"User {chat_id} created {len(created_tasks)} tasks")
+            logger.info(f"User {chat_id} created {len(created_tasks)} tasks, skipped {skipped_count}")
+        elif skipped_count > 0:
+            await update.message.reply_text(f"⚠️ 全部 {skipped_count} 条任务因时间已过未创建")
+            perf.checkpoint("Telegram发送跳过消息")
         else:
             await update.message.reply_text("未能创建任何任务，请检查输入格式。")
             perf.checkpoint("Telegram发送错误消息")
 
         perf.finish()
+
+    async def _handle_reminder_time_input(
+        self,
+        update: Update,
+        context: ContextTypes.DEFAULT_TYPE,
+        user: User
+    ):
+        """
+        处理修改时间的输入
+
+        Args:
+            update: Telegram Update
+            context: 上下文
+            user: 用户对象
+        """
+        chat_id = update.effective_chat.id
+        text = update.message.text.strip()
+        task_id = user.awaiting_reminder_task_id
+        original_message_id = user.awaiting_reminder_message_id
+
+        # 获取任务
+        task = self.db.get_task_by_id(task_id)
+        if not task:
+            await update.message.reply_text("任务不存在。")
+            self.db.clear_user_reminder_waiting(user.id)
+            return
+
+        # 解析新时间
+        parser = DateParser(user.tz)
+        due_date, time_str, _, is_passed = parser.parse_date_time(text)
+
+        # 如果没有解析到时间，提示错误
+        if not time_str:
+            await update.message.reply_text("无法解析时间，请重新输入。\n支持格式：今晚8点 / 今天20:00 / 周五20:00 / 20:00")
+            return
+
+        # 如果时间已过，提示重输
+        if is_passed:
+            await update.message.reply_text(get_time_passed_edit_message())
+            return
+
+        # 组合新的提醒时间
+        new_reminder_at = f"{due_date} {time_str}"
+
+        # 更新任务提醒
+        success = self.db.update_task_reminder(task_id, new_reminder_at, due_date)
+        if not success:
+            await update.message.reply_text("更新失败，请稍后重试。")
+            return
+
+        # 更新提醒 Job
+        if 'scheduler' in context.bot_data:
+            scheduler = context.bot_data['scheduler']
+            # 移除旧 Job
+            scheduler.remove_reminder_job(task_id)
+            # 重新获取任务对象
+            task = self.db.get_task_by_id(task_id)
+            # 创建新 Job
+            scheduler.schedule_reminder_job(task, user.tz)
+
+        # 清除等待状态
+        self.db.clear_user_reminder_waiting(user.id)
+
+        # 编辑原消息（显示更新后的提醒消息）
+        message = get_reminder_message(task.content, new_reminder_at, user.tz)
+        buttons = create_reminder_buttons(task_id)
+
+        if original_message_id:
+            # 编辑原消息
+            try:
+                await context.bot.edit_message_text(
+                    chat_id=chat_id,
+                    message_id=original_message_id,
+                    text=message,
+                    reply_markup=buttons
+                )
+            except Exception as e:
+                # 如果编辑失败，发送新消息
+                logger.warning(f"Failed to edit original message: {e}")
+                await update.message.reply_text(message, reply_markup=buttons)
+        else:
+            # 没有保存 message_id，发送新消息
+            await update.message.reply_text(message, reply_markup=buttons)
+
+        logger.info(f"User {chat_id} updated reminder time: task_id={task_id}, new_reminder_at={new_reminder_at}")
