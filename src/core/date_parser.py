@@ -207,6 +207,51 @@ class DateParser:
 
         return None
 
+    def _parse_chinese_minute(self, text: str) -> Optional[Tuple[int, int]]:
+        """
+        解析中文分钟（0-59）
+
+        Args:
+            text: 文本（如 "十分xxx" 或 "二十五分xxx"）
+
+        Returns:
+            (分钟值, 匹配的字符数) 或 None
+        """
+        # X十Y分 (如 二十五分、三十分)
+        for cn1, val1 in CHINESE_NUMBERS.items():
+            if val1 in [2, 3, 4, 5] and text.startswith(cn1 + "十"):
+                rest = text[len(cn1) + 1:]
+                # X十Y分
+                for cn2, val2 in CHINESE_NUMBERS.items():
+                    if 1 <= val2 <= 9 and rest.startswith(cn2 + "分"):
+                        minute = val1 * 10 + val2
+                        matched_len = len(cn1) + 1 + len(cn2) + 1
+                        return minute, matched_len
+                # X十分
+                if rest.startswith("分"):
+                    minute = val1 * 10
+                    matched_len = len(cn1) + 2
+                    return minute, matched_len
+
+        # 十Y分 (如 十五分)
+        if text.startswith("十"):
+            rest = text[1:]
+            for cn, val in CHINESE_NUMBERS.items():
+                if 1 <= val <= 9 and rest.startswith(cn + "分"):
+                    minute = 10 + val
+                    matched_len = 1 + len(cn) + 1
+                    return minute, matched_len
+            # 十分
+            if rest.startswith("分"):
+                return 10, 2
+
+        # 单个数字分 (如 五分)
+        for cn, val in CHINESE_NUMBERS.items():
+            if 1 <= val <= 9 and text.startswith(cn + "分"):
+                return val, len(cn) + 1
+
+        return None
+
     def parse_time(self, text: str) -> Optional[Tuple[int, int, str]]:
         """
         从文本开头解析时间
@@ -238,7 +283,15 @@ class DateParser:
             if 0 <= hour <= 23 and 0 <= minute <= 59:
                 return hour, minute, match.group(0)
 
-        # 模式 3: 数字+点/点半（必须在开头）
+        # 模式 3: 数字+点+分钟（必须在开头）
+        # 优先匹配 X点Y分
+        match = re.match(r'^(\d{1,2})点(\d{1,2})分', text)
+        if match:
+            hour, minute = int(match.group(1)), int(match.group(2))
+            if 0 <= hour <= 23 and 0 <= minute <= 59:
+                return hour, minute, match.group(0)
+
+        # 再匹配 X点半 或 X点
         match = re.match(r'^(\d{1,2})点(半)?', text)
         if match:
             hour = int(match.group(1))
@@ -251,7 +304,15 @@ class DateParser:
             if text.startswith(period_name):
                 rest = text[len(period_name):]
 
-                # 尝试匹配阿拉伯数字 + 点
+                # 尝试匹配阿拉伯数字 + 点 + 分钟（优先）
+                match = re.match(r'^(\d{1,2})点(\d{1,2})分', rest)
+                if match:
+                    hour, minute = int(match.group(1)), int(match.group(2))
+                    hour = self._adjust_hour_by_period(hour, period_name)
+                    if hour is not None and 0 <= minute <= 59:
+                        return hour, minute, period_name + match.group(0)
+
+                # 尝试匹配阿拉伯数字 + 点半/点
                 match = re.match(r'^(\d{1,2})点(半)?', rest)
                 if match:
                     hour = int(match.group(1))
@@ -261,15 +322,29 @@ class DateParser:
                     if hour is not None:
                         return hour, minute, period_name + match.group(0)
 
-                # 尝试匹配中文数字 + 点
+                # 尝试匹配中文数字 + 点 + 中文分钟（优先）
                 for cn_num, num_val in CHINESE_NUMBERS.items():
                     if rest.startswith(cn_num + "点"):
                         hour = num_val
-                        # 检查是否有"半"
                         after_dian = rest[len(cn_num) + 1:]
-                        minute = 30 if after_dian.startswith("半") else 0
-                        matched_len = len(cn_num) + 1 + (1 if minute == 30 else 0)
-                        # 根据时段调整小时
+                        # 尝试解析中文分钟
+                        minute_result = self._parse_chinese_minute(after_dian)
+                        if minute_result:
+                            minute, minute_len = minute_result
+                            matched_len = len(cn_num) + 1 + minute_len
+                            hour = self._adjust_hour_by_period(hour, period_name)
+                            if hour is not None:
+                                return hour, minute, period_name + rest[:matched_len]
+                        # 检查是否有"半"
+                        if after_dian.startswith("半"):
+                            minute = 30
+                            matched_len = len(cn_num) + 2
+                            hour = self._adjust_hour_by_period(hour, period_name)
+                            if hour is not None:
+                                return hour, minute, period_name + rest[:matched_len]
+                        # 仅 X点
+                        minute = 0
+                        matched_len = len(cn_num) + 1
                         hour = self._adjust_hour_by_period(hour, period_name)
                         if hour is not None:
                             return hour, minute, period_name + rest[:matched_len]
@@ -350,8 +425,18 @@ class DateParser:
             if 0 <= hour <= 23 and 0 <= minute <= 59:
                 return hour, minute, match.group(0)
 
-        # 模式 6: 时段词 + 阿拉伯数字 + 点（必须在结尾，优先于纯数字）
+        # 模式 6: 时段词 + 阿拉伯数字 + 点 + 分钟（必须在结尾）
         for period_name, (min_hour, max_hour) in TIME_PERIOD_KEYWORDS.items():
+            # 优先匹配 X点Y分
+            pattern = period_name + r'(\d{1,2})点(\d{1,2})分$'
+            match = re.search(pattern, text)
+            if match:
+                hour, minute = int(match.group(1)), int(match.group(2))
+                hour = self._adjust_hour_by_period(hour, period_name)
+                if hour is not None and 0 <= minute <= 59:
+                    return hour, minute, match.group(0)
+
+            # 再匹配 X点半/X点
             pattern = period_name + r'(\d{1,2})点(半)?$'
             match = re.search(pattern, text)
             if match:
@@ -361,21 +446,53 @@ class DateParser:
                 if hour is not None:
                     return hour, minute, match.group(0)
 
-        # 模式 7: 时段词 + 中文数字 + 点（必须在结尾）
+        # 模式 7: 时段词 + 中文数字 + 点 + 分钟（必须在结尾）
         for period_name, (min_hour, max_hour) in TIME_PERIOD_KEYWORDS.items():
             for cn_num, num_val in CHINESE_NUMBERS.items():
-                # 匹配：晚上八点、晚上八点半
-                pattern = period_name + cn_num + r'点(半)?$'
-                match = re.search(pattern, text)
-                if match:
-                    hour = num_val
-                    minute = 30 if match.group(1) else 0
-                    hour = self._adjust_hour_by_period(hour, period_name)
-                    if hour is not None:
-                        matched = period_name + cn_num + "点" + ("半" if minute == 30 else "")
-                        return hour, minute, matched
+                prefix = period_name + cn_num + "点"
+                if prefix in text:
+                    # 检查是否在结尾位置
+                    idx = text.rfind(prefix)
+                    after_prefix = text[idx + len(prefix):]
 
-        # 模式 8: 纯数字+点/点半（必须在结尾，最低优先级）
+                    # 尝试匹配中文分钟（如 十分、二十五分）
+                    minute_result = self._parse_chinese_minute(after_prefix)
+                    if minute_result:
+                        minute, minute_len = minute_result
+                        # 验证是否在结尾
+                        if idx + len(prefix) + minute_len == len(text):
+                            hour = num_val
+                            hour = self._adjust_hour_by_period(hour, period_name)
+                            if hour is not None:
+                                matched = prefix + after_prefix[:minute_len]
+                                return hour, minute, matched
+
+                    # 匹配 X点半
+                    if after_prefix == "半":
+                        hour = num_val
+                        minute = 30
+                        hour = self._adjust_hour_by_period(hour, period_name)
+                        if hour is not None:
+                            matched = prefix + "半"
+                            return hour, minute, matched
+
+                    # 匹配 X点（结尾）
+                    if after_prefix == "":
+                        hour = num_val
+                        minute = 0
+                        hour = self._adjust_hour_by_period(hour, period_name)
+                        if hour is not None:
+                            return hour, minute, prefix
+
+        # 模式 8: 纯数字+点+分钟（必须在结尾，最低优先级）
+        # 优先匹配 X点Y分
+        match = re.search(r'(\d{1,2})点(\d{1,2})分$', text)
+        if match:
+            hour, minute = int(match.group(1)), int(match.group(2))
+            if 0 <= hour <= 23 and 0 <= minute <= 59:
+                return hour, minute, match.group(0)
+
+        # 再匹配 X点半/X点
         match = re.search(r'(\d{1,2})点(半)?$', text)
         if match:
             hour = int(match.group(1))
