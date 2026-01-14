@@ -417,8 +417,8 @@ class DateParser:
                 return 12
             return None
         elif period_name == "下午":
-            # 下午 1-5 点 -> 13-17
-            if 1 <= hour <= 5:
+            # 下午 1-8 点 -> 13-20（口语中"下午"可延伸到傍晚）
+            if 1 <= hour <= 8:
                 return hour + 12
             elif hour == 12:
                 return 12
