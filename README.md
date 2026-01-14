@@ -57,6 +57,12 @@ cp config.example.json config.json
   "logging": {
     "level": "INFO",
     "file": "data/bot.log"
+  },
+  "notifications": {
+    "startup_alert": {
+      "enabled": false,
+      "admin_chat_id": null
+    }
   }
 }
 ```
@@ -291,30 +297,6 @@ docker-compose up -d
 docker-compose logs | grep "Scheduler ready"
 ```
 
-## 开发与测试
-
-### 运行单元测试
-
-```bash
-# 测试日期解析器
-python -m unittest tests.test_date_parser -v
-
-# 测试所有模块（待实现更多测试）
-python -m unittest discover -s tests -v
-```
-
-### 调试模式
-
-修改 `config.json` 中的日志级别：
-
-```json
-{
-  "logging": {
-    "level": "DEBUG"  // 输出详细日志
-  }
-}
-```
-
 ## 技术架构
 
 ### 技术栈
@@ -333,7 +315,9 @@ Telegram_Plan_bot/
 │   ├── bot/              # Bot 交互层
 │   │   ├── handlers.py   # 命令处理器
 │   │   ├── callbacks.py  # 回调处理器
-│   │   └── messages.py   # 消息文案模板
+│   │   ├── messages.py   # 消息文案模板
+│   │   ├── keyboards.py  # 键盘按钮构建
+│   │   └── task_sender.py # 任务发送模块
 │   ├── core/             # 核心逻辑
 │   │   ├── date_parser.py    # 日期解析引擎
 │   │   ├── state_machine.py  # 任务状态机
@@ -345,12 +329,10 @@ Telegram_Plan_bot/
 │   ├── utils/            # 工具模块
 │   │   ├── config.py     # 配置管理
 │   │   ├── logger.py     # 日志系统
-│   │   └── validators.py # 验证器
+│   │   ├── validators.py # 验证器
+│   │   └── performance.py # 性能监控
 │   └── constants.py      # 常量定义
-├── tests/                # 测试
-│   └── test_date_parser.py
 ├── docs/                 # 文档
-│   └── planbot-checklist.v1.0.md
 ├── main.py               # 主程序入口
 ├── requirements.txt      # Python 依赖
 ├── Dockerfile            # Docker 镜像
@@ -362,7 +344,3 @@ Telegram_Plan_bot/
 ## 许可证
 
 MIT License
-
-## 致谢
-
-本项目严格按照 `docs/planbot-checklist.v1.0.md` 开发清单实现，感谢原作者的详细规范。
