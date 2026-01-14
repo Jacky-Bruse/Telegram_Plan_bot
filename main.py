@@ -188,6 +188,7 @@ def main():
         try:
             # 3. 启动调度器并重建 Job
             scheduler.start()
+            application.bot_data['scheduler'] = scheduler
             catchup_task_ids = scheduler.rebuild_all_jobs()
             logger.info("Scheduler started and jobs rebuilt")
             logger.info("Scheduler ready")
