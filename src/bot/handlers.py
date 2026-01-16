@@ -627,7 +627,7 @@ class BotHandlers:
         # 回复用户输入消息，确认修改成功
         confirm_msg = get_reminder_time_changed_message(task.content, new_reminder_at, user.tz)
         try:
-            await update.message.reply_text(confirm_msg)
+            await update.message.reply_text(confirm_msg, quote=True)
         except Exception as e:
             logger.warning(f"Failed to send confirmation reply: {e}")
             # 兜底：如果回复失败，尝试直接发送消息
