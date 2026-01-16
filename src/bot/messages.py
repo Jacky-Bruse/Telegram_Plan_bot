@@ -502,3 +502,20 @@ def get_edit_canceled_message() -> str:
     return "已取消修改"
 
 
+def get_reminder_time_changed_message(task_content: str, new_reminder_at: str, timezone: str = "Asia/Shanghai") -> str:
+    """
+    获取修改提醒时间后的确认消息
+
+    Args:
+        task_content: 任务内容（原文）
+        new_reminder_at: 新提醒时间（YYYY-MM-DD HH:MM）
+        timezone: 时区名称
+
+    Returns:
+        确认消息，格式：{任务名}修改成{YYYY-MM-DD HH:MM}
+    """
+    parser = DateParser(timezone)
+    clean_content = parser.strip_datetime_prefix(task_content)
+    return f"{clean_content}修改成{new_reminder_at}"
+
+

@@ -37,6 +37,7 @@ from src.bot.messages import (
     get_time_passed_edit_message,
     get_reminder_message,
     get_reminder_updated_message,
+    get_reminder_time_changed_message,
 )
 from src.bot.task_sender import send_tasks_with_buttons
 from src.bot.keyboards import create_task_buttons, create_reminder_buttons
@@ -622,6 +623,18 @@ class BotHandlers:
 
         # 清除等待状态
         self.db.clear_user_reminder_waiting(user.id)
+
+        # 回复用户输入消息，确认修改成功
+        confirm_msg = get_reminder_time_changed_message(task.content, new_reminder_at, user.tz)
+        try:
+            await update.message.reply_text(confirm_msg)
+        except Exception as e:
+            logger.warning(f"Failed to send confirmation reply: {e}")
+            # 兜底：如果回复失败，尝试直接发送消息
+            try:
+                await context.bot.send_message(chat_id=chat_id, text=confirm_msg)
+            except Exception as e2:
+                logger.warning(f"Failed to send confirmation message: {e2}")
 
         # 编辑原消息（显示更新后的提醒消息）
         message = get_reminder_message(task.content, new_reminder_at, user.tz)
