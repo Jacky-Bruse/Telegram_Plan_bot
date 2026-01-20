@@ -22,7 +22,6 @@ from src.bot.messages import (
     get_new_plan_prompt,
     get_morning_checklist_header,
     get_overdue_review_header,
-    get_overdue_warning,
     get_overdue_snooze_hint,
     format_overdue_task_item,
     get_reminder_message,
@@ -501,7 +500,9 @@ class TaskScheduler:
         snoozed = user.overdue_snooze_date == today
 
         # 获取逾期任务数量
-        overdue_count = self.db.count_overdue_tasks(user.id, today)
+        overdue_tasks = []
+        if not snoozed:
+            overdue_tasks = self.db.get_overdue_tasks(user.id, today)
 
         # 获取当日 pending/missed 任务
         tasks = self.db.get_tasks_by_user_and_date(
@@ -511,30 +512,27 @@ class TaskScheduler:
         )
 
         # 若无逾期任务也无今日任务，静默
-        if not tasks and (overdue_count == 0 or snoozed):
+        if not tasks and not overdue_tasks:
             logger.info(f"No tasks for morning checklist: user_id={user_id}")
             return
 
         # 构建消息
-        lines = []
-        show_overdue = overdue_count > 0 and not snoozed
+        if overdue_tasks:
+            await self._send_overdue_review(chat_id, overdue_tasks)
+            await self.bot.send_message(
+                chat_id=chat_id,
+                text=get_overdue_snooze_hint(),
+                reply_markup=create_overdue_snooze_buttons(),
+            )
 
-        # 1. 逾期任务提示（如有）
-        if show_overdue:
-            lines.append(get_overdue_warning(overdue_count))
-            lines.append(get_overdue_snooze_hint())
-            lines.append("")  # 空行分隔
-
-        # 2. 今日待办（如有）
         if tasks:
-            lines.append(get_morning_checklist_header())
+            lines = [get_morning_checklist_header()]
             for task in tasks:
                 lines.append(format_task_item(task))
+            message = "\n".join(lines)
+            await self.bot.send_message(chat_id=chat_id, text=message)
 
-        message = "\n".join(lines)
-        buttons = create_overdue_snooze_buttons() if show_overdue else None
-        await self.bot.send_message(chat_id=chat_id, text=message, reply_markup=buttons)
-
+        overdue_count = len(overdue_tasks)
         logger.info(
             f"Morning checklist sent to user_id={user_id}, "
             f"overdue_count={overdue_count}, today_tasks_count={len(tasks)}"
