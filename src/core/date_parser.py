@@ -299,6 +299,23 @@ class DateParser:
             if 0 <= hour <= 23:
                 return hour, minute, match.group(0)
 
+        # 模式 3.5: 中文数字 + 点（必须在开头）
+        for cn_num in sorted(CHINESE_NUMBERS.keys(), key=len, reverse=True):
+            if text.startswith(cn_num + "点"):
+                hour = CHINESE_NUMBERS[cn_num]
+                after_dian = text[len(cn_num) + 1:]
+                minute_result = self._parse_chinese_minute(after_dian)
+                if minute_result:
+                    minute, minute_len = minute_result
+                    matched_len = len(cn_num) + 1 + minute_len
+                    if 0 <= hour <= 23:
+                        return hour, minute, text[:matched_len]
+                if after_dian.startswith("半"):
+                    if 0 <= hour <= 23:
+                        return hour, 30, text[:len(cn_num) + 2]
+                if 0 <= hour <= 23:
+                    return hour, 0, text[:len(cn_num) + 1]
+
         # 模式 4: 时段词 + 中文数字/阿拉伯数字 + 点（必须在开头）
         for period_name, (min_hour, max_hour) in TIME_PERIOD_KEYWORDS.items():
             if text.startswith(period_name):
